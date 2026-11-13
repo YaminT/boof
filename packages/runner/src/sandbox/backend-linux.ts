@@ -4,6 +4,9 @@ import { fileURLToPath } from "node:url";
 import { SandboxUnavailableError, type SandboxChild, type SandboxSpawnPlan } from "@boof/heart";
 import type { CommandLaunch, SandboxLaunchPolicy } from "@boof/heart";
 
+/** Read by the helper; set from the server process only. */
+const NPROC_KNOBS = ["BOOF_SANDBOX_NPROC_FLOOR", "BOOF_SANDBOX_NPROC_HEADROOM"] as const;
+
 const POLICY_KEYS = ["version", "readExec", "readWrite", "denyTcpPorts", "env"] as const;
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const HELPER_NAME = "boof-sandbox";
@@ -117,6 +120,14 @@ export function planLinuxSandbox(
     denyTcpPorts: policy.denyTcpPorts,
   });
   const childEnv: NodeJS.ProcessEnv = { ...(env ?? process.env), ...policy.env };
+  // The helper reads its process-count knobs from its own environment. Only the server's own
+  // environment may set them: an agent or step environment (`env`, `policy.env`) must not raise
+  // the cap, so those values are dropped and the server's are copied back.
+  for (const name of NPROC_KNOBS) {
+    delete childEnv[name];
+    const trusted = process.env[name];
+    if (trusted !== undefined) childEnv[name] = trusted;
+  }
   return {
     command: launch.helper,
     args: ["--policy-fd", "3", "--", command, ...args],

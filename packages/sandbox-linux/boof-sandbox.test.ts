@@ -677,18 +677,148 @@ describe.skipIf(process.platform !== "linux" || hostAbi < 6)("boof-sandbox", () 
     expect(survivors).toEqual([]);
   });
 
-  it("caps processes and lowers the priority of the sandboxed command", async () => {
+  it("caps processes from the caller's own task count and pins nice", async () => {
     await tree();
-    const result = await run(basePolicy([]), [probe, "limits"]);
-    expect(result.code).toBe(0);
-    const match = /limits nproc=(\d+)\/(\d+) nice=(\d+) host=(\d+)/.exec(result.stdout);
-    expect(match).not.toBeNull();
-    const [cur, max, nice, host] = match!.slice(1).map(Number);
-    // The cap is the host's task count when the helper started plus 2,048, not the user's ulimit.
-    expect(cur).toBe(max);
-    expect(cur).toBeGreaterThan(host);
-    expect(cur).toBeLessThanOrEqual(host + 2048 + 512);
-    expect(nice).toBe(19);
+    const clean = { ...process.env };
+    delete clean.BOOF_SANDBOX_NPROC_FLOOR;
+    delete clean.BOOF_SANDBOX_NPROC_HEADROOM;
+    const parse = (out: string) =>
+      /limits nproc=(\d+)\/(\d+) nice=(\d+) nice_rlim=(\d+)\/(\d+) host=(\d+) floor=(\S+) headroom=(\S+)/.exec(
+        out,
+      );
+    // Default: generous floor, and the knobs are gone before the command runs.
+    const base = await run(basePolicy([]), [probe, "limits"], 8000, clean);
+    expect(base.code).toBe(0);
+    const m = parse(base.stdout);
+    expect(m).not.toBeNull();
+    expect(Number(m![1])).toBe(Number(m![2]));
+    expect(Number(m![1])).toBeGreaterThanOrEqual(8192);
+    expect(Number(m![3])).toBe(19);
+    // F: the command cannot raise its priority again.
+    expect(m![4]).toBe("0");
+    expect(m![5]).toBe("0");
+    // Knobs come from the helper's environment and are removed before exec.
+    const knobbed = await run(basePolicy([]), [probe, "limits"], 8000, {
+      ...clean,
+      BOOF_SANDBOX_NPROC_FLOOR: "0",
+      BOOF_SANDBOX_NPROC_HEADROOM: "1000",
+    });
+    const k = parse(knobbed.stdout);
+    expect(k).not.toBeNull();
+    // The basis is the caller's tasks (never more than the host's) plus the headroom.
+    expect(Number(k![1])).toBeGreaterThanOrEqual(1000);
+    expect(Number(k![1])).toBeLessThanOrEqual(Number(k![6]) + 1000);
+    expect(k![7]).toBe("unset");
+    expect(k![8]).toBe("unset");
+    const bad = await run(basePolicy([]), [probe, "limits"], 8000, {
+      ...clean,
+      BOOF_SANDBOX_NPROC_HEADROOM: "lots",
+    });
+    expectHelperError(bad, "bad BOOF_SANDBOX_NPROC_HEADROOM");
+  });
+
+  it("A reaps exited orphans while the command runs and keeps the command's own status", async () => {
+    await tree();
+    // 2,000 reparented orphans exit while the command runs. Without a reap they stay zombies and
+    // use up a cap of 800 of headroom, so bash stops being able to fork. The shell builtin keeps
+    // this free of exec, and the loop's last command sets the exit status.
+    const result = await run(
+      basePolicy([]),
+      ["/usr/bin/bash", "-c", "for i in {1..2000}; do ( : & ); done; echo orphans-done; exit 42"],
+      60000,
+      { ...process.env, BOOF_SANDBOX_NPROC_FLOOR: "0", BOOF_SANDBOX_NPROC_HEADROOM: "800" },
+    );
+    expect(result.stderr).not.toContain("fork:");
+    expect(result.stdout).toContain("orphans-done");
+    expect(result.code).toBe(42);
+  }, 90000);
+
+  it("B refuses scheduling, priority and rlimit changes on any process but the caller", async () => {
+    await tree();
+    const outside = spawn("sleep", ["60"], { stdio: "ignore" });
+    try {
+      const result = await run(basePolicy([]), [probe, "task-control", String(outside.pid)]);
+      expect(result.code).toBe(0);
+      const lines = new Map(
+        result.stdout
+          .trim()
+          .split("\n")
+          .map((line) => line.split(" ") as [string, string]),
+      );
+      for (const self of [
+        "prlimit-self",
+        "setpriority-self",
+        "sched-scheduler-self",
+        "sched-affinity-self",
+        "ioprio-self",
+      ]) {
+        expect(lines.get(self), self).toBe("ok");
+      }
+      for (const other of [
+        "prlimit-parent",
+        "prlimit-outside",
+        "setpriority-parent",
+        "setpriority-outside",
+        "sched-scheduler-parent",
+        "sched-param-parent",
+        "sched-attr-parent",
+        "sched-affinity-parent",
+        "ioprio-parent",
+        "ioprio-outside",
+      ]) {
+        expect(lines.get(other), other).toBe("EPERM");
+      }
+    } finally {
+      outside.kill("SIGKILL");
+    }
+  });
+
+  it("B: prlimit on an outside process cannot arm an RLIMIT_CPU kill", async () => {
+    await tree();
+    const outside = spawn("sh", ["-c", "while :; do :; done"], { stdio: "ignore" });
+    try {
+      const result = await run(basePolicy([]), [
+        "/usr/bin/prlimit",
+        "--pid",
+        String(outside.pid),
+        "--cpu=2:2",
+      ]);
+      expect(result.code).not.toBe(0);
+      await new Promise((resolve) => setTimeout(resolve, 3000));
+      expect(outside.exitCode).toBeNull();
+      expect(outside.signalCode).toBeNull();
+    } finally {
+      outside.kill("SIGKILL");
+    }
+  }, 30000);
+
+  it("D fails closed when /proc children files are unavailable", async () => {
+    await tree();
+    const result = await run(
+      basePolicy([]),
+      [probe, "limits"],
+      8000,
+      { ...process.env, BOOF_SANDBOX_FAULT: "proc-children" },
+      testHelper,
+    );
+    expectHelperError(result, "proc children unavailable");
+  });
+
+  it("E fails closed when the caller's task count or limits cannot be read", async () => {
+    await tree();
+    for (const [fault, text] of [
+      ["proc-tasks", "cannot count caller tasks"],
+      ["getrlimit", "getrlimit nproc"],
+    ] as const) {
+      const result = await run(
+        basePolicy([]),
+        [probe, "limits"],
+        8000,
+        { ...process.env, BOOF_SANDBOX_FAULT: fault },
+        testHelper,
+      );
+      expectHelperError(result, text);
+    }
   });
 
   it("tears down a storm that keeps forking within a deadline and leaves no survivor", async () => {
@@ -724,6 +854,8 @@ describe.skipIf(process.platform !== "linux" || hostAbi < 6)("boof-sandbox", () 
     writeFileSync(policyPath, basePolicy([]));
     const fd = openSync(policyPath, "r");
     const child = spawn(helper, ["--policy-fd", "3", "--", probe, "storm-live", "7000"], {
+      // A small cap keeps the storm inside the TasksMax of the scope it runs in.
+      env: { ...process.env, BOOF_SANDBOX_NPROC_FLOOR: "0", BOOF_SANDBOX_NPROC_HEADROOM: "2000" },
       stdio: ["ignore", "pipe", "pipe", fd],
       detached: true,
     });

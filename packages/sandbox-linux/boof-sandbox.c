@@ -86,6 +86,14 @@ struct syscall_table {
   __u32 sendto_nr;
   __u32 sendmsg_nr;
   __u32 sendmmsg_nr;
+  /* Allowed only for the caller. See apply_seccomp. */
+  __u32 setpriority_nr;
+  __u32 sched_setscheduler_nr;
+  __u32 sched_setparam_nr;
+  __u32 sched_setattr_nr;
+  __u32 sched_setaffinity_nr;
+  __u32 prlimit64_nr;
+  __u32 ioprio_set_nr;
   __u32 deny[17];
 };
 
@@ -93,10 +101,9 @@ struct syscall_table {
  * x32 sendmsg/sendmmsg use different numbers, and the x32 bit kills them first.
  */
 static const struct syscall_table k_tables[] = {
-    {AUDIT_ARCH_X86_64, 0x40000000u, 41, 53, 44, 46, 307,
-     {425, 426, 427, 101, 310, 311, 165, 166, 155, 161, 308, 250, 248, 249, 321, 298,
-      323}},
-    {AUDIT_ARCH_AARCH64, 0, 198, 199, 206, 211, 269,
+    {AUDIT_ARCH_X86_64, 0x40000000u, 41, 53, 44, 46, 307, 141, 144, 142, 314, 203, 302, 251,
+     {425, 426, 427, 101, 310, 311, 165, 166, 155, 161, 308, 250, 248, 249, 321, 298, 323}},
+    {AUDIT_ARCH_AARCH64, 0, 198, 199, 206, 211, 269, 140, 119, 118, 274, 122, 261, 30,
      {425, 426, 427, 117, 270, 271, 40, 39, 41, 51, 268, 219, 217, 218, 280, 241, 282}},
 };
 
@@ -186,6 +193,14 @@ static void fail_path(const char *prefix, const char *path) {
   }
   fail(buf);
 }
+
+/* Fault names are read only from the test build. A production helper ignores the variable. */
+#ifdef BOOF_SANDBOX_TEST
+static int sandbox_fault(const char *name) {
+  const char *value = getenv("BOOF_SANDBOX_FAULT");
+  return value != NULL && strcmp(value, name) == 0;
+}
+#endif
 
 static const struct syscall_table *native_table(void) {
 #if defined(__x86_64__)
@@ -657,6 +672,49 @@ static void apply_seccomp(void) {
   emit(filter, &n, BPF_JMP | BPF_JSET | BPF_K, 0, 1, MSG_FASTOPEN);
   emit(filter, &n, BPF_RET | BPF_K, 0, 0, SECCOMP_RET_ERRNO | EPERM);
   emit(filter, &n, BPF_RET | BPF_K, 0, 0, SECCOMP_RET_ALLOW);
+  /*
+   * Scheduling, priority, io priority and prlimit. Each block returns, so a miss leaves the
+   * syscall number in A. The filter is inherited and cannot call getpid(), so "this task" is
+   * pid/who 0: the kernel reads that as the caller. Any other id (the helper, the runner, or
+   * another process of this uid) is EPERM. Landlock scopes signals, not these calls.
+   *
+   * setpriority: which must be PRIO_PROCESS (0) and who must be 0. PRIO_PGRP or PRIO_USER would
+   * renice a group or every process of a uid.
+   *   jeq nr, 0, +6 / ld which / jeq PRIO_PROCESS, 0, +3 / ld who / jeq 0, 0, +1 / ALLOW / EPERM
+   * sched_setscheduler, sched_setparam, sched_setattr, sched_setaffinity: pid is arg0.
+   *   four jeq share one "arg0 == 0" check.
+   * prlimit64: pid is arg0. glibc getrlimit/setrlimit pass 0.
+   * ioprio_set: which must be IOPRIO_WHO_PROCESS (1) and who must be 0. who 0 alone would also
+   * match IOPRIO_WHO_USER (uid 0) and IOPRIO_WHO_PGRP (the caller's group, which can include
+   * the helper).
+   */
+  emit(filter, &n, BPF_JMP | BPF_JEQ | BPF_K, 0, 6, table->setpriority_nr);
+  emit(filter, &n, BPF_LD | BPF_W | BPF_ABS, 0, 0, arg0);
+  emit(filter, &n, BPF_JMP | BPF_JEQ | BPF_K, 0, 3, 0); /* PRIO_PROCESS */
+  emit(filter, &n, BPF_LD | BPF_W | BPF_ABS, 0, 0, arg1);
+  emit(filter, &n, BPF_JMP | BPF_JEQ | BPF_K, 0, 1, 0);
+  emit(filter, &n, BPF_RET | BPF_K, 0, 0, SECCOMP_RET_ALLOW);
+  emit(filter, &n, BPF_RET | BPF_K, 0, 0, SECCOMP_RET_ERRNO | EPERM);
+  emit(filter, &n, BPF_JMP | BPF_JEQ | BPF_K, 3, 0, table->sched_setscheduler_nr);
+  emit(filter, &n, BPF_JMP | BPF_JEQ | BPF_K, 2, 0, table->sched_setparam_nr);
+  emit(filter, &n, BPF_JMP | BPF_JEQ | BPF_K, 1, 0, table->sched_setattr_nr);
+  emit(filter, &n, BPF_JMP | BPF_JEQ | BPF_K, 0, 4, table->sched_setaffinity_nr);
+  emit(filter, &n, BPF_LD | BPF_W | BPF_ABS, 0, 0, arg0);
+  emit(filter, &n, BPF_JMP | BPF_JEQ | BPF_K, 0, 1, 0);
+  emit(filter, &n, BPF_RET | BPF_K, 0, 0, SECCOMP_RET_ALLOW);
+  emit(filter, &n, BPF_RET | BPF_K, 0, 0, SECCOMP_RET_ERRNO | EPERM);
+  emit(filter, &n, BPF_JMP | BPF_JEQ | BPF_K, 0, 4, table->prlimit64_nr);
+  emit(filter, &n, BPF_LD | BPF_W | BPF_ABS, 0, 0, arg0);
+  emit(filter, &n, BPF_JMP | BPF_JEQ | BPF_K, 0, 1, 0);
+  emit(filter, &n, BPF_RET | BPF_K, 0, 0, SECCOMP_RET_ALLOW);
+  emit(filter, &n, BPF_RET | BPF_K, 0, 0, SECCOMP_RET_ERRNO | EPERM);
+  emit(filter, &n, BPF_JMP | BPF_JEQ | BPF_K, 0, 6, table->ioprio_set_nr);
+  emit(filter, &n, BPF_LD | BPF_W | BPF_ABS, 0, 0, arg0);
+  emit(filter, &n, BPF_JMP | BPF_JEQ | BPF_K, 0, 3, 1); /* IOPRIO_WHO_PROCESS */
+  emit(filter, &n, BPF_LD | BPF_W | BPF_ABS, 0, 0, arg1);
+  emit(filter, &n, BPF_JMP | BPF_JEQ | BPF_K, 0, 1, 0);
+  emit(filter, &n, BPF_RET | BPF_K, 0, 0, SECCOMP_RET_ALLOW);
+  emit(filter, &n, BPF_RET | BPF_K, 0, 0, SECCOMP_RET_ERRNO | EPERM);
   for (unsigned i = 0; i < sizeof table->deny / sizeof table->deny[0]; i++) {
     emit(filter, &n, BPF_JMP | BPF_JEQ | BPF_K, 0, 1, table->deny[i]);
     emit(filter, &n, BPF_RET | BPF_K, 0, 0, SECCOMP_RET_ERRNO | EPERM);
@@ -760,35 +818,153 @@ static void kill_and_reap_descendants(void) {
   }
 }
 
-/* Threads and processes that exist on the host right now (4th field of /proc/loadavg). */
-static unsigned long host_task_count(void) {
-  FILE *file = fopen("/proc/loadavg", "r");
-  if (file == NULL) return 0;
-  double a, b, c;
-  unsigned long running = 0, total = 0;
-  int got = fscanf(file, "%lf %lf %lf %lu/%lu", &a, &b, &c, &running, &total);
-  fclose(file);
-  return got == 5 ? total : 0;
+/*
+ * RLIMIT_NPROC is checked against the forking task's limit and counts every task (threads
+ * included) of that real uid, sandboxed or not. It does not count other users or kernel threads.
+ * The cap is fixed when the helper starts, and every sandbox of this uid shares the uid's count,
+ * so the headroom has to leave room for a JVM, gradle, a large -j build and a sibling helper.
+ *
+ * Floor is the smallest cap even when the uid is quiet. Headroom is how many more tasks this
+ * sandbox may create on top of the uid's current tasks. The cap is the greater of the two:
+ * max(floor, uid tasks + headroom). It never grows with the host's task count. Both default to
+ * 8192, which is deliberately loose: the symptom of a tight cap is a bare EAGAIN in a long step.
+ * The cap only lowers the caller's current limit; it cannot raise a hard limit.
+ *
+ * BOOF_SANDBOX_NPROC_FLOOR and BOOF_SANDBOX_NPROC_HEADROOM override the defaults. The runner
+ * copies those from the server process after it has dropped every BOOF_SANDBOX_* name the agent
+ * environment tried to set. The helper unsets both before exec, so the command never sees them.
+ */
+#define SANDBOX_NPROC_FLOOR 8192UL
+#define SANDBOX_NPROC_HEADROOM 8192UL
+#define SANDBOX_NPROC_OVERRIDE_MAX 1000000UL
+
+/* Sum of Threads: in /proc/<pid>/status for processes whose real uid is the caller's. 0 on failure. */
+static unsigned long caller_task_count(void) {
+#ifdef BOOF_SANDBOX_TEST
+  if (sandbox_fault("proc-tasks")) return 0;
+#endif
+  DIR *dir = opendir("/proc");
+  if (dir == NULL) return 0;
+  uid_t uid = getuid();
+  char self_name[32];
+  snprintf(self_name, sizeof self_name, "%ld", (long)getpid());
+  unsigned long total = 0;
+  int saw_self = 0;
+  int failed = 0;
+  for (;;) {
+    errno = 0;
+    struct dirent *ent = readdir(dir);
+    if (ent == NULL) {
+      if (errno != 0) failed = 1;
+      break;
+    }
+    const char *name = ent->d_name;
+    if (name[0] < '1' || name[0] > '9') continue;
+    int numeric = 1;
+    for (const char *p = name; *p != '\0'; p++) {
+      if (*p < '0' || *p > '9') numeric = 0;
+    }
+    if (!numeric) continue;
+    char path[64];
+    if (snprintf(path, sizeof path, "/proc/%s/status", name) >= (int)sizeof path) continue;
+    FILE *file = fopen(path, "r");
+    if (file == NULL) {
+      if (errno == ENOENT || errno == ESRCH || errno == EACCES) continue;
+      failed = 1;
+      break;
+    }
+    char line[512];
+    int match = 0;
+    int saw_threads = 0;
+    unsigned long threads = 0;
+    unsigned long real_uid = 0;
+    while (fgets(line, sizeof line, file) != NULL) {
+      if (strncmp(line, "Uid:", 4) == 0) {
+        if (sscanf(line, "Uid: %lu", &real_uid) == 1) match = real_uid == (unsigned long)uid;
+      } else if (strncmp(line, "Threads:", 8) == 0) {
+        if (sscanf(line, "Threads: %lu", &threads) == 1) saw_threads = 1;
+      }
+    }
+    int bad = ferror(file);
+    fclose(file);
+    if (bad) {
+      failed = 1;
+      break;
+    }
+    int is_self = strcmp(name, self_name) == 0;
+    if (match) {
+      if (!saw_threads || threads == 0) {
+        failed = 1;
+        break;
+      }
+      total += threads;
+    }
+    if (is_self) {
+      if (!match || !saw_threads) failed = 1;
+      else saw_self = 1;
+    }
+  }
+  closedir(dir);
+  if (failed || !saw_self || total == 0) return 0;
+  return total;
 }
 
-/* Extra processes and threads a sandboxed command may add on top of what the host already runs. */
-#define SANDBOX_NPROC_HEADROOM 2048UL
+static unsigned long nproc_knob(const char *name, unsigned long fallback) {
+  const char *text = getenv(name);
+  if (text == NULL || text[0] == '\0') return fallback;
+  if (text[0] < '0' || text[0] > '9') failf("bad %s", name);
+  errno = 0;
+  char *end = NULL;
+  unsigned long value = strtoul(text, &end, 10);
+  if (errno != 0 || end == text || *end != '\0' || value > SANDBOX_NPROC_OVERRIDE_MAX)
+    failf("bad %s", name);
+  return value;
+}
 
 /*
- * Applied in the sandboxed child before exec. RLIMIT_NPROC bounds a fork storm (it is per uid,
- * so the cap is the host's current count plus headroom), and nice 19 lets the supervisor win the
- * CPU against thousands of runnable storm processes when it has to stop and kill them.
+ * Applied in the sandboxed child before exec. The nproc cap bounds a fork storm. nice 19 lets
+ * the supervisor win the CPU when it has to stop and kill one. RLIMIT_NICE hard 0 then stops
+ * the command raising its priority again on a host that granted a higher ceiling.
  */
 static void apply_resource_limits(void) {
-  unsigned long total = host_task_count();
+  unsigned long tasks = caller_task_count();
+  if (tasks == 0) failf("cannot count caller tasks: proc status unavailable");
+  unsigned long floor = nproc_knob("BOOF_SANDBOX_NPROC_FLOOR", SANDBOX_NPROC_FLOOR);
+  unsigned long headroom = nproc_knob("BOOF_SANDBOX_NPROC_HEADROOM", SANDBOX_NPROC_HEADROOM);
+  unsetenv("BOOF_SANDBOX_NPROC_FLOOR");
+  unsetenv("BOOF_SANDBOX_NPROC_HEADROOM");
+  if (headroom > ~(unsigned long)0 - tasks) failf("cannot count caller tasks: overflow");
+  unsigned long sum = tasks + headroom;
+  unsigned long cap_ul = sum > floor ? sum : floor;
   struct rlimit nproc;
-  if (total > 0 && getrlimit(RLIMIT_NPROC, &nproc) == 0) {
-    rlim_t cap = (rlim_t)(total + SANDBOX_NPROC_HEADROOM);
-    if (cap < nproc.rlim_max) nproc.rlim_max = cap;
-    if (cap < nproc.rlim_cur) nproc.rlim_cur = cap;
-    if (setrlimit(RLIMIT_NPROC, &nproc) != 0) failf("setrlimit nproc: %s", strerror(errno));
-  }
+#ifdef BOOF_SANDBOX_TEST
+  if (sandbox_fault("getrlimit")) failf("getrlimit nproc: test fault");
+#endif
+  if (getrlimit(RLIMIT_NPROC, &nproc) != 0) failf("getrlimit nproc: %s", strerror(errno));
+  rlim_t cap = (rlim_t)cap_ul;
+  if (cap < nproc.rlim_max) nproc.rlim_max = cap;
+  if (cap < nproc.rlim_cur) nproc.rlim_cur = cap;
+  if (setrlimit(RLIMIT_NPROC, &nproc) != 0) failf("setrlimit nproc: %s", strerror(errno));
   if (setpriority(PRIO_PROCESS, 0, 19) != 0) failf("setpriority: %s", strerror(errno));
+  struct rlimit nice_lim;
+  if (getrlimit(RLIMIT_NICE, &nice_lim) != 0) failf("getrlimit nice: %s", strerror(errno));
+  /* 20 - rlim is the best nice allowed. 0 means the command cannot raise its priority. */
+  nice_lim.rlim_cur = 0;
+  nice_lim.rlim_max = 0;
+  if (setrlimit(RLIMIT_NICE, &nice_lim) != 0) failf("setrlimit nice: %s", strerror(errno));
+}
+
+/* CONFIG_PROC_CHILDREN is required. ENOENT here used to look like "no children". */
+static void require_proc_children(void) {
+#ifdef BOOF_SANDBOX_TEST
+  if (sandbox_fault("proc-children")) failf("proc children unavailable: ENOENT");
+#endif
+  long tid = syscall(SYS_gettid);
+  char path[128];
+  snprintf(path, sizeof path, "/proc/self/task/%ld/children", tid);
+  int fd = open(path, O_RDONLY | O_CLOEXEC);
+  if (fd < 0) failf("proc children unavailable: %s", strerror(errno));
+  close(fd);
 }
 
 static volatile sig_atomic_t supervisor_signal = 0;
@@ -857,6 +1033,7 @@ int main(int argc, char **argv) {
   close(fd);
   parse_policy(buf, len);
 
+  require_proc_children();
   if (prctl(PR_SET_CHILD_SUBREAPER, 1, 0, 0, 0) != 0)
     failf("child subreaper: %s", strerror(errno));
   struct sigaction action;
@@ -887,10 +1064,23 @@ int main(int argc, char **argv) {
     execvp(argv[4], &argv[4]);
     failf("exec %s: %s", argv[4], strerror(errno));
   }
-  int status;
+  /*
+   * The helper is a subreaper, so orphans it did not spawn become its children. Reap every
+   * zombie while the command runs. A zombie still counts toward RLIMIT_NPROC. Only the direct
+   * child's status is the command's status; an orphan's status is discarded.
+   */
+  int status = 0;
+  int child_done = 0;
   for (;;) {
-    pid_t waited = waitpid(child, &status, WNOHANG);
-    if (waited == child) break;
+    int st = 0;
+    pid_t waited;
+    while ((waited = waitpid(-1, &st, WNOHANG)) > 0) {
+      if (waited == child) {
+        status = st;
+        child_done = 1;
+      }
+    }
+    if (child_done) break;
     if (waited < 0 && errno != EINTR) failf("waitpid: %s", strerror(errno));
     if (supervisor_signal) signal_process_tree(child, SIGKILL);
     struct timespec delay = {.tv_sec = 0, .tv_nsec = 10000000};
