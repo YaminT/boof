@@ -152,6 +152,47 @@ describe("a dependent goal starts from the branches of its dependencies", () => 
     process.platform === "win32" ? 180_000 : 20_000,
   );
 
+  it(
+    "a developer that does not commit still chains: the dependent starts from the snapshot",
+    async () => {
+      const seen: Record<string, boolean> = {};
+      mockState.onRun = async (opts) => {
+        if (opts.role !== "developer") return;
+        const goalId = /- Goal: (\S+)/.exec(opts.prompt)?.[1];
+        if (!goalId) return;
+        await writeFile(join(opts.cwd, `${goalId}.txt`), `${goalId}\n`); // no commit
+        seen[goalId] = (await git(["cat-file", "-e", "HEAD:a.txt"], opts.cwd)).code === 0;
+      };
+      await runPlan([testGoal("a", 1), testGoal("b", 2, ["a"]), testGoal("c", 3, ["a", "b"])]);
+      expect((await task("boof-b")).frontmatter.status).toBe("done");
+      expect(seen["b"]).toBe(true); // B's worktree already held A's file when B's developer ran
+      expect(await fileOn("boof-runner/boof-a", "a.txt")).toBe(true);
+      expect(await fileOn("boof-runner/boof-b", "a.txt")).toBe(true);
+      expect(await fileOn("boof-runner/boof-b", "b.txt")).toBe(true);
+      expect(await fileOn("boof-runner/boof-c", "b.txt")).toBe(true);
+      expect(
+        (
+          await git([
+            "rev-parse",
+            "--verify",
+            "--quiet",
+            "refs/heads/boof-runner/boof-a--leftovers",
+          ])
+        ).code,
+      ).not.toBe(0);
+    },
+    process.platform === "win32" ? 180_000 : 30_000,
+  );
+
+  it("warns in the log when a done dependency left no branch", async () => {
+    await runPlan([testGoal("a", 1), testGoal("b", 2, ["a"])]);
+    await git(["branch", "-D", "boof-runner/boof-a"]);
+    await plans.modify("p", (pl) => ({ ...pl, goals: [...pl.goals, testGoal("d", 3, ["a"])] }));
+    await new RunnerEngine({ root: dataRoot, pollIntervalMs: 10 }).runUntilIdle();
+    const d = await task("boof-d");
+    expect(d.body.log).toContain("dependency a produced no commits");
+  });
+
   it("createIntegrationBranch refuses fewer than two branches", async () => {
     const res = await createIntegrationBranch(workDir, "x--base", ["main"]);
     expect(res.ok).toBe(false);

@@ -379,6 +379,7 @@ export async function commitLeftovers(
   workingDir: string,
   wt: Worktree,
   title: string,
+  opts: { onTaskBranch?: boolean } = {},
 ): Promise<LeftoversResult | null> {
   // Inspect before status because status intentionally ignores submodule contents.
   const staged = await checkedWorktreeGit(wt, ["ls-files", "--stage", "-z"]);
@@ -443,7 +444,8 @@ export async function commitLeftovers(
   if (status.code !== 0) throw new Error(`git status failed: ${status.err || status.out}`);
   if (!status.out) return null;
 
-  const branch = leftoversBranch(wt);
+  const onTaskBranch = opts.onTaskBranch === true;
+  const branch = onTaskBranch ? wt.branch : leftoversBranch(wt);
   const tmp = await mkdtemp(join(tmpdir(), "boof-leftovers-"));
   try {
     const env = { GIT_INDEX_FILE: join(tmp, "index") };
@@ -504,13 +506,15 @@ export async function commitLeftovers(
     const unsaved = skipped;
 
     const parents = ["-p", head];
-    const prior = await git(workingDir, [
-      "rev-parse",
-      "--verify",
-      "--quiet",
-      `refs/heads/${branch}`,
-    ]);
-    if (prior.code === 0 && prior.out) parents.push("-p", prior.out);
+    if (!onTaskBranch) {
+      const prior = await git(workingDir, [
+        "rev-parse",
+        "--verify",
+        "--quiet",
+        `refs/heads/${branch}`,
+      ]);
+      if (prior.code === 0 && prior.out) parents.push("-p", prior.out);
+    }
 
     // Fresh machines and CI may have no committer identity configured.
     const ident =
@@ -525,9 +529,22 @@ export async function commitLeftovers(
       tree,
       ...parents,
       "-m",
-      `boof-runner leftovers: ${title}`,
+      onTaskBranch ? `boof: ${title}` : `boof-runner leftovers: ${title}`,
     ]);
-    await run(["update-ref", `refs/heads/${branch}`, sha]);
+    if (onTaskBranch) {
+      // Compare-and-swap against the head the snapshot was built on; then bring the
+      // worktree's own index in line with the new head (files stay as they are).
+      await run(["update-ref", `refs/heads/${branch}`, sha, head]);
+      const reset = await checkedWorktreeGit(
+        wt,
+        ["reset", "-q", "--mixed", "HEAD"],
+        undefined,
+        CHECKOUT_TIMEOUT_MS,
+      );
+      if (reset.code !== 0) throw new Error(`git reset failed: ${reset.err || reset.out}`);
+    } else {
+      await run(["update-ref", `refs/heads/${branch}`, sha]);
+    }
     return { branch, sha, unsaved };
   } finally {
     await rm(tmp, { recursive: true, force: true });
@@ -562,7 +579,7 @@ async function deleteWork(workingDir: string, wt: Worktree, why: string): Promis
  *   directory is removed; the task branch is untouched and kept.
  * - keep: leftovers go to the side branch; the directory is left in place.
  * - delete: directory and branch are removed (opt-in; logged loudly).
- * Never commits onto the task branch. Never throws; returns log lines. On any
+ * Commits onto the task branch only with `snapshotOnTaskBranch` (plan tasks). Never throws; returns log lines. On any
  * failure the directory is kept.
  */
 export async function finalizeWorktree(
@@ -570,6 +587,7 @@ export async function finalizeWorktree(
   wt: Worktree,
   title: string,
   policy: DonePolicy = "keep-branch",
+  opts: { snapshotOnTaskBranch?: boolean } = {},
 ): Promise<string[]> {
   try {
     await verifyWorktreeRecord(wt);
@@ -585,8 +603,16 @@ export async function finalizeWorktree(
   }
   const lines: string[] = [];
   try {
-    const left = await commitLeftovers(workingDir, wt, title);
-    if (left) lines.push(`Leftovers committed to ${left.branch} at ${left.sha}`);
+    const left = await commitLeftovers(workingDir, wt, title, {
+      onTaskBranch: opts.snapshotOnTaskBranch === true,
+    });
+    if (left) {
+      lines.push(
+        opts.snapshotOnTaskBranch
+          ? `Uncommitted work snapshotted onto task branch ${left.branch} at ${left.sha}`
+          : `Leftovers committed to ${left.branch} at ${left.sha}`,
+      );
+    }
     if (left && left.unsaved.length > 0) {
       lines.push(
         `Kept worktree ${wt.path}: nested git repositories are not saved on ${left.branch} ` +

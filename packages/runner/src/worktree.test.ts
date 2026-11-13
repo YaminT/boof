@@ -109,6 +109,42 @@ describe("worktree isolation", () => {
     expect((await g(["rev-parse", "--verify", "refs/heads/boof-runner/t1"])).code).toBe(0);
   });
 
+  it("snapshotOnTaskBranch advances the task branch with uncommitted work, keeps the user's branch", async () => {
+    const mainBefore = (await g(["rev-parse", "main"])).stdout.trim();
+    const wt = await createWorktree(repo, "snap1");
+    await writeFile(join(wt.path, "made.txt"), "uncommitted\n");
+    const lines = await finalizeWorktree(repo, wt, "Make it", "keep", {
+      snapshotOnTaskBranch: true,
+    });
+    expect(lines.join("\n")).toContain("snapshotted onto task branch boof-runner/snap1");
+    expect((await g(["show", "boof-runner/snap1:made.txt"])).stdout.trim()).toBe("uncommitted");
+    expect((await g(["log", "-1", "--format=%s", "boof-runner/snap1"])).stdout.trim()).toBe(
+      "boof: Make it",
+    );
+    expect(
+      (await g(["rev-parse", "--verify", "--quiet", "refs/heads/boof-runner/snap1--leftovers"]))
+        .code,
+    ).not.toBe(0);
+    expect((await g(["rev-parse", "main"])).stdout.trim()).toBe(mainBefore);
+    // keep: the worktree stays and is clean against the new head
+    const status = await execCommand("git", ["status", "--porcelain"], {
+      launch: { kind: "direct" },
+      cwd: wt.path,
+      timeoutMs: 10000,
+    });
+    expect(status.stdout.trim()).toBe("");
+  });
+
+  it("without the option an uncommitted task still goes to the --leftovers side branch", async () => {
+    const wt = await createWorktree(repo, "snap2");
+    await writeFile(join(wt.path, "made.txt"), "uncommitted\n");
+    await finalizeWorktree(repo, wt, "Adhoc");
+    expect((await g(["rev-parse", "boof-runner/snap2"])).stdout.trim()).toBe(wt.base);
+    expect((await g(["show", "boof-runner/snap2--leftovers:made.txt"])).stdout.trim()).toBe(
+      "uncommitted",
+    );
+  });
+
   it("reuses an existing worktree (preserving prior work) across iterations", async () => {
     const first = await ensureWorktree(repo, "t3");
     await writeFile(join(first.path, "iter1.txt"), "from iteration 1\n");
