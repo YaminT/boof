@@ -92,7 +92,10 @@ export function useCommandActions({
           : new Promise<void>((resolve, reject) => setStopping({ task, resolve, reject })),
       activatePlan: (id, plan) =>
         mutate(
-          async () => reportCreated((await activateWithTasks(id, plan)).created),
+          async () => {
+            const r = await activateWithTasks(id, plan);
+            reportCreated(r.created, r.waiting);
+          },
           "",
           "Could not create the tasks",
         ),

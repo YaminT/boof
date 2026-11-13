@@ -11,11 +11,13 @@ import { errorMessage } from "./act.js";
 export async function activateWithTasks(
   pid: string,
   plan: { id: string; version: number },
-): Promise<{ plan: Plan; created: number }> {
-  const active = await api.updatePlan(pid, plan, { status: "active" });
+): Promise<{ plan: Plan; created: number; ready: number; waiting: number }> {
+  const active = await api.updatePlan(pid, plan, { status: "active", autoSync: true });
   try {
-    const report = await api.syncPlan(pid, active.id, false);
-    return { plan: active, created: report.created.length };
+    const report = await api.syncPlan(pid, active.id, false, true);
+    const created = report.created.length;
+    const waiting = report.created.filter((c) => c.skip).length;
+    return { plan: active, created, ready: created - waiting, waiting };
   } catch (err) {
     throw new Error(`the plan is active, but its tasks were not created (${errorMessage(err)})`, {
       cause: err,
@@ -24,7 +26,12 @@ export async function activateWithTasks(
 }
 
 /** Say how the "Create tasks" step ended: "Tasks created" only when tasks were created. */
-export function reportCreated(created: number): void {
-  if (created > 0) toast.success(`Tasks created (${created})`);
+export function createdMessage(created: number, waiting: number): string {
+  const word = created === 1 ? "task" : "tasks";
+  return `${created} ${word} created (${created - waiting} ready, ${waiting} waiting for earlier tasks)`;
+}
+
+export function reportCreated(created: number, waiting = 0): void {
+  if (created > 0) toast.success(createdMessage(created, waiting));
   else toast.warning("The plan is active, but no new tasks were created.");
 }

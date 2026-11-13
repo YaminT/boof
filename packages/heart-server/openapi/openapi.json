@@ -11051,7 +11051,7 @@
     },
     "/projects/{projectId}/plans/{planId}/sync": {
       "post": {
-        "description": "Creates one task per unblocked goal of an active plan and updates tasks of changed goals. Inputs: projectId, planId, dryRun, stopRunning (needs tasks:control). Writes tasks and goal bookkeeping unless dryRun.",
+        "description": "Creates one task per unblocked goal of an active plan and updates tasks of changed goals. With includeBlocked it also creates skipped `blocked` tasks for goals whose dependencies are not done; they unskip when the dependencies finish. Inputs: projectId, planId, dryRun, includeBlocked, stopRunning (needs tasks:control). Writes tasks and goal bookkeeping unless dryRun.",
         "operationId": "plans.sync",
         "parameters": [
           {
@@ -11084,6 +11084,9 @@
                 "additionalProperties": false,
                 "properties": {
                   "dryRun": {
+                    "type": "boolean"
+                  },
+                  "includeBlocked": {
                     "type": "boolean"
                   },
                   "stopRunning": {

@@ -162,14 +162,16 @@ export function PlanPage({
   });
 
   const startSync = async () => {
-    const report = await act(() => api.syncPlan(pid, plan.id, true), {
+    const report = await act(() => api.syncPlan(pid, plan.id, true, true), {
       failure: "Could not preview the sync",
     });
     if (report) setSyncPreview(report);
   };
   const confirmSync = async () => {
     setSyncing(true);
-    const r = await act(() => api.syncPlan(pid, plan.id, false), { failure: "Could not sync" });
+    const r = await act(() => api.syncPlan(pid, plan.id, false, true), {
+      failure: "Could not sync",
+    });
     setSyncing(false);
     setSyncPreview(null);
     if (!r) return;
@@ -211,7 +213,7 @@ export function PlanPage({
         onActivate={() =>
           void mutate(async (p) => {
             const r = await activateWithTasks(pid, p);
-            reportCreated(r.created);
+            reportCreated(r.created, r.waiting);
             return r.plan;
           }, "Could not create the tasks").then((p) => {
             if (p) changed();

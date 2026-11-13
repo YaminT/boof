@@ -354,7 +354,7 @@ export const plansSync = defineOp({
   name: "plans.sync",
   title: "Sync a plan to tasks",
   description:
-    "Creates one task per unblocked goal of an active plan and updates tasks of changed goals. Inputs: projectId, planId, dryRun, stopRunning (needs tasks:control). Writes tasks and goal bookkeeping unless dryRun.",
+    "Creates one task per unblocked goal of an active plan and updates tasks of changed goals. With includeBlocked it also creates skipped `blocked` tasks for goals whose dependencies are not done; they unskip when the dependencies finish. Inputs: projectId, planId, dryRun, includeBlocked, stopRunning (needs tasks:control). Writes tasks and goal bookkeeping unless dryRun.",
   scope: "plans:write",
   projectScoped: true,
   input: z.strictObject({ ...planBase, ...SyncPlanBody.shape }),

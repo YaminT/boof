@@ -783,7 +783,7 @@ export class PlanService {
    */
   async syncTasks(
     planId: string,
-    opts: { dryRun?: boolean; stopRunning?: boolean } = {},
+    opts: { dryRun?: boolean; stopRunning?: boolean; includeBlocked?: boolean } = {},
     actor?: Principal,
   ): Promise<SyncResult> {
     if (opts.stopRunning && actor && !hasScope(actor, "tasks:control")) {
@@ -815,6 +815,7 @@ export class PlanService {
         planId,
         dryRun: opts.dryRun,
         stopRunning: opts.stopRunning,
+        includeBlocked: opts.includeBlocked,
         mayStop,
         mayArchive: owned,
         createStatus,

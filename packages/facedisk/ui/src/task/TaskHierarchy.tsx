@@ -5,7 +5,7 @@ import { formatRoute } from "../lib/route.js";
 import { childTasks, hierarchyLine, newSubtaskHref, tasksForEpicHref } from "../lib/task-links.js";
 import { progressLabel } from "../lib/task-hierarchy.js";
 import { StatusPill } from "../shell/StatusPill.js";
-import { goalInfo, planRefOf } from "../lib/plan-grouping.js";
+import { goalInfo, planRefOf, waitingFor } from "../lib/plan-grouping.js";
 import { usePlanDetails } from "../lib/usePlanDetails.js";
 import { useEpics } from "../tasks/useEpics.js";
 import type { TaskActions } from "../tasks/useTaskActions.js";
@@ -72,6 +72,14 @@ export function TaskHierarchy({
           })()}
         </p>
       )}
+      {(() => {
+        const waiting = waitingFor(task, ref ? planDetails.get(ref.planId) : undefined);
+        return waiting ? (
+          <p className="m-0 text-[length:var(--text-row)] text-ink-muted">
+            Waiting for: {waiting.join(", ")}
+          </p>
+        ) : null;
+      })()}
       {(line.parent || line.epic) && (
         <p className="m-0 flex flex-wrap items-center gap-x-4 gap-y-2 text-[length:var(--text-row)] text-ink-muted">
           {line.parent &&

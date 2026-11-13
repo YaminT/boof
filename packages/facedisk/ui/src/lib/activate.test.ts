@@ -24,14 +24,24 @@ describe("activateWithTasks", () => {
   it("activates the plan, then syncs it for real so the tasks exist", async () => {
     updatePlan.mockResolvedValue({ id: "p1", version: 3, status: "active" });
     syncPlan.mockResolvedValue({
-      created: [{ taskId: "a" }, { taskId: "b" }],
+      created: [
+        { taskId: "a", skip: false },
+        { taskId: "b", skip: true },
+      ],
       updated: [],
       skipped: [],
     });
     const r = await activateWithTasks("proj", { id: "p1", version: 2 });
-    expect(updatePlan).toHaveBeenCalledWith("proj", { id: "p1", version: 2 }, { status: "active" });
-    expect(syncPlan).toHaveBeenCalledWith("proj", "p1", false);
-    expect(r.created).toBe(2);
+    expect(updatePlan).toHaveBeenCalledWith(
+      "proj",
+      { id: "p1", version: 2 },
+      {
+        status: "active",
+        autoSync: true,
+      },
+    );
+    expect(syncPlan).toHaveBeenCalledWith("proj", "p1", false, true);
+    expect(r).toMatchObject({ created: 2, ready: 1, waiting: 1 });
   });
 
   it("says the plan is active but no tasks exist when the sync fails", async () => {
@@ -54,7 +64,9 @@ describe("reportCreated", () => {
     reportCreated(0);
     expect(toast.success).not.toHaveBeenCalled();
     expect(toast.warning).toHaveBeenCalled();
-    reportCreated(2);
-    expect(toast.success).toHaveBeenCalledWith("Tasks created (2)");
+    reportCreated(9, 8);
+    expect(toast.success).toHaveBeenCalledWith(
+      "9 tasks created (1 ready, 8 waiting for earlier tasks)",
+    );
   });
 });
