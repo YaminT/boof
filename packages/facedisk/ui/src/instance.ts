@@ -11,6 +11,21 @@ import {
   getToken,
 } from "./token.js";
 
+/** A proof of the bound instance is reused this long (one `/healthz` per minute per tab). */
+const PROOF_TTL_MS = 60_000;
+/** Wait before re-probing after the nth consecutive failed probe (the last value repeats). */
+const RETRY_BACKOFF_MS = [2_000, 5_000, 15_000, 30_000];
+let proven: { bound: string; until: number } | null = null;
+let failed: { bound: string; count: number; retryAt: number } | null = null;
+let inflight: { bound: string; promise: Promise<InstanceCheck> } | null = null;
+
+/** Forget cached proofs and failures (tests, and sign-out). */
+export function resetInstanceProof(): void {
+  proven = null;
+  failed = null;
+  inflight = null;
+}
+
 const INSTANCE_ID = /^[0-9a-f]{64}$/;
 
 function randomNonce(): string {
@@ -36,6 +51,7 @@ export function noteInstanceHeader(value: string | null): void {
   if (!value || !INSTANCE_ID.test(value)) return;
   const bound = getBoundInstance();
   if (bound && bound !== value) {
+    resetInstanceProof();
     blockSavedKey();
     return;
   }
@@ -50,15 +66,36 @@ export type InstanceCheck = "send" | "omit-key" | "withhold";
  * `withhold`: do not connect. The saved key is still bound, and this listener did not prove it
  * (the server is down, or the probe failed closed).
  */
-export async function confirmInstance(fetchImpl: typeof fetch = fetch): Promise<InstanceCheck> {
-  if (authIsBlocked()) return "omit-key";
+export function confirmInstance(fetchImpl: typeof fetch = fetch): Promise<InstanceCheck> {
+  if (authIsBlocked()) return Promise.resolve("omit-key");
   discardUnboundSavedKey();
   const bound = getBoundInstance();
   const token = getToken();
   // Nothing to protect, or a key that was just typed and is not bound yet.
-  if (!bound || !token) return "send";
+  if (!bound || !token) return Promise.resolve("send");
 
+  const now = Date.now();
+  // A proof of this instance is fresh: no probe. A different instance id never reuses it.
+  if (proven && proven.bound === bound && now < proven.until) return Promise.resolve("send");
+  // The last probe failed closed: do not probe again before the backoff has passed.
+  if (failed && failed.bound === bound && now < failed.retryAt) return Promise.resolve("withhold");
+  // One probe at a time; concurrent callers share its answer.
+  if (inflight && inflight.bound === bound) return inflight.promise;
+  const promise = probe(bound, fetchImpl).finally(() => {
+    if (inflight?.promise === promise) inflight = null;
+  });
+  inflight = { bound, promise };
+  return promise;
+}
+
+async function probe(bound: string, fetchImpl: typeof fetch): Promise<InstanceCheck> {
   const nonce = randomNonce();
+  const fail = (): InstanceCheck => {
+    const count = (failed?.bound === bound ? failed.count : 0) + 1;
+    const wait = RETRY_BACKOFF_MS[Math.min(count, RETRY_BACKOFF_MS.length) - 1];
+    failed = { bound, count, retryAt: Date.now() + wait };
+    return "withhold";
+  };
   let res: Response;
   try {
     res = await fetchImpl(`healthz?nonce=${encodeURIComponent(nonce)}`, {
@@ -68,15 +105,19 @@ export async function confirmInstance(fetchImpl: typeof fetch = fetch): Promise<
       signal: AbortSignal.timeout(3000),
     });
   } catch {
-    return "withhold";
+    return fail();
   }
-  if (!res.ok) return "withhold";
+  if (!res.ok) return fail();
   const body = (await res.json().catch(() => null)) as { instanceProof?: unknown } | null;
   const proof = body?.instanceProof;
   const expected = await instanceProof(bound, nonce);
   if (!expected || typeof proof !== "string" || !sameProof(proof, expected)) {
     blockSavedKey();
+    proven = null;
+    failed = null;
     return "omit-key";
   }
+  failed = null;
+  proven = { bound, until: Date.now() + PROOF_TTL_MS };
   return "send";
 }

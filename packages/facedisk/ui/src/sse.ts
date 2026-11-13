@@ -77,6 +77,8 @@ export interface EventStreamOptions {
   onMessage: (m: SseMessage) => void;
   /** Called after each (re)connection becomes ready, e.g. to refetch. */
   onOpen?: () => void;
+  /** Called when an open (or attempted) connection ends or fails, before the reconnect delay. */
+  onClose?: () => void;
   /** Called on a 401 so the UI can ask for a key; reconnects stop until the next start(). */
   onUnauthorized?: (
     sentToken?: string,
@@ -154,6 +156,7 @@ export function connectEventStream(opts: EventStreamOptions): () => void {
             continue;
           }
           // Without a way to wait for a new key, stop; otherwise pause until one is stored.
+          opts.onClose?.();
           if (!opts.waitForCredentials) return;
           await opts.waitForCredentials(ctrl.signal);
           if (ctrl.signal.aborted) return;
@@ -177,6 +180,7 @@ export function connectEventStream(opts: EventStreamOptions): () => void {
         if (ctrl.signal.aborted) return;
       }
       if (ctrl.signal.aborted) return;
+      opts.onClose?.();
       await sleep(backoff(attempt), ctrl.signal);
       attempt += 1;
     }

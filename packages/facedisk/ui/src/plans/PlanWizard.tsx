@@ -35,6 +35,8 @@ import {
   type WizardStep,
 } from "../lib/wizard.js";
 import { AnswerBox } from "../task/AnswerBox.js";
+import { startPoller, type Poller } from "../lib/poller.js";
+import { useLive } from "../useLive.js";
 import { useHarnesses } from "../useHarnesses.js";
 import type { AppData } from "../useAppData.js";
 import { WizardTaskList } from "./WizardTaskList.js";
@@ -145,14 +147,40 @@ export function PlanWizard({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // The draft is read when a live event names it; the poll is only a safety net.
+  const planPoller = useRef<Poller | null>(null);
+  const liveUp = useRef(false);
+  useLive({
+    onEvent: (e) => {
+      if (e.type.startsWith("plan.") || e.type.startsWith("task.")) planPoller.current?.kick();
+    },
+    onChanged: () => planPoller.current?.kick(),
+    onStatus: (up) => {
+      liveUp.current = up;
+      planPoller.current?.replan();
+    },
+  });
+
   const drafting = !!task && ACTIVE.has(task.frontmatter.status);
   // Follow the draft task while it runs; when it ends, take its goals into the list.
   const taskStatus = task?.frontmatter.status;
   const wasDrafting = useRef(false);
   useEffect(() => {
     if (!draft.planId || !drafting) return;
-    const t = window.setInterval(() => void loadPlan(draftRef.current.planId!), 2000);
-    return () => window.clearInterval(t);
+    const p = startPoller({
+      load: async () => {
+        await loadPlan(draftRef.current.planId!);
+      },
+      live: () => liveUp.current,
+      liveMs: 10_000,
+      fallbackMs: 2_000,
+      minGapMs: 1_000,
+    });
+    planPoller.current = p;
+    return () => {
+      p.stop();
+      planPoller.current = null;
+    };
   }, [drafting, draft.planId, loadPlan]);
   useEffect(() => {
     if (drafting) wasDrafting.current = true;

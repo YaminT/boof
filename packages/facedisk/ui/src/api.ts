@@ -38,8 +38,10 @@ import { parseSse } from "./lib/concierge-stream.js";
 import type { RunnerOverview } from "./lib/topbar.js";
 import type { TaskReview } from "@boof/heart";
 import type { Goal, GoalInput, GoalStatus, Plan, PlanStatus } from "@boof/heart";
+import { cachedGet, invalidateCache } from "./lib/request-cache.js";
 import { confirmInstance, noteInstanceHeader } from "./instance.js";
 import {
+  onTokenChange,
   authHeaders,
   getToken,
   notifyUnauthorized,
@@ -47,6 +49,9 @@ import {
   storageUnavailableMessage,
   unauthorizedReason,
 } from "./token.js";
+
+// A new key may be a different principal: nothing cached for the old one applies.
+onTokenChange(() => invalidateCache());
 
 /** An error response of the v1 API, with its machine-readable code and details. */
 export class ApiError extends Error {
@@ -105,6 +110,8 @@ async function http<T>(path: string, init?: RequestInit, retried = false): Promi
     headers: { "content-type": "application/json", ...auth.headers, ...(init?.headers ?? {}) },
   });
   rememberInstance(res, auth.sent !== undefined);
+  // A write may change what the cached reads returned.
+  if (init?.method && init.method.toUpperCase() !== "GET") invalidateCache();
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
     // The key changed while this request was in flight (a rotation): try once with the new one.
@@ -186,7 +193,9 @@ export interface UpdateNotice {
 
 /** The cached release notice. This does not ask GitHub. */
 export function getUpdateNotice(): Promise<UpdateNotice | null> {
-  return http<{ update: UpdateNotice | null }>(`${V1}/updates`).then((r) => r.update);
+  return cachedGet("updates", () => http<{ update: UpdateNotice | null }>(`${V1}/updates`)).then(
+    (r) => r.update,
+  );
 }
 
 /** Hide this version until a newer one is cached. */
@@ -326,7 +335,10 @@ export const api = {
     }),
   submitAnswers: (pid: string, id: string, answers: string) =>
     httpTask(`${T(pid, id)}/answers`, { method: "POST", body: JSON.stringify({ answers }) }),
-  actions: () => http<{ actions: TaskView[] }>(`${V1}/actions`).then((r) => r.actions.map(withLog)),
+  actions: () =>
+    cachedGet("actions", () => http<{ actions: TaskView[] }>(`${V1}/actions`)).then((r) =>
+      r.actions.map(withLog),
+    ),
 
   uploadAttachment: async (pid: string, id: string, file: File): Promise<TaskView> => {
     const form = new FormData();
@@ -364,7 +376,7 @@ export const api = {
   deleteCommand: (id: string) =>
     http<{ referencedBy: string[] }>(`${V1}/commands/${id}`, { method: "DELETE" }),
 
-  getSettings: () => http<Settings>(`${V1}/settings`),
+  getSettings: () => cachedGet("settings", () => http<Settings>(`${V1}/settings`)),
   updateSettings: (
     patch: SettingsPatch & { owlishApiKey?: string | null; owlishAgentKey?: string | null },
   ) => http<Settings>(`${V1}/settings`, { method: "PUT", body: JSON.stringify(patch) }),
@@ -380,7 +392,8 @@ export const api = {
     http<{ enabled: boolean; concurrency: number }>(`${V1}/runner`, json("PUT", { enabled })),
   runnerStatus: () => http<RunnerStatus>(`${V1}/runner`),
   /** Runner on/off and, per project, what runs now (the topbar). */
-  runnerOverview: () => http<RunnerOverview>(`${V1}/runner/status`),
+  runnerOverview: () =>
+    cachedGet("runner/status", () => http<RunnerOverview>(`${V1}/runner/status`), 2_000),
   accountAction: (verb: "pause" | "resume", accountId: string) =>
     http<{ ok: true }>(`${V1}/accounts/${encodeURIComponent(accountId)}/${verb}`, {
       method: "POST",
@@ -407,7 +420,8 @@ export const api = {
     if (refresh) q.set("refresh", "true");
     if (projectId) q.set("forProject", projectId);
     const qs = q.toString();
-    return http<HarnessStatus>(`${V1}/harnesses${qs ? `?${qs}` : ""}`);
+    if (refresh || projectId) return http<HarnessStatus>(`${V1}/harnesses${qs ? `?${qs}` : ""}`);
+    return cachedGet("harnesses", () => http<HarnessStatus>(`${V1}/harnesses`));
   },
   /** Asks the tools for their models (POST). GET /models only reads the last lists. */
   models: () =>
@@ -416,13 +430,15 @@ export const api = {
     ),
   modelDetails: () =>
     http<{ tools: Record<string, ToolModelDetails> }>(`${V1}/models/details`).then((r) => r.tools),
-  usage: () => http<TokenUsage>(`${V1}/usage`),
-  budget: () => http<BudgetStatus>(`${V1}/usage/budget`),
+  usage: () => cachedGet("usage", () => http<TokenUsage>(`${V1}/usage`)),
+  budget: () => cachedGet("budget", () => http<BudgetStatus>(`${V1}/usage/budget`)),
   projectUsage: (pid: string) => http<TokenUsage>(`${P(pid)}/usage`),
 
   listProjects: (includeArchived = false) =>
-    http<{ projects: ProjectView[] }>(
-      `${V1}/projects${includeArchived ? "?includeArchived=1" : ""}`,
+    cachedGet(`projects${includeArchived ? "?archived" : ""}`, () =>
+      http<{ projects: ProjectView[] }>(
+        `${V1}/projects${includeArchived ? "?includeArchived=1" : ""}`,
+      ),
     ).then((r) => r.projects),
   getProject: (pid: string) => http<ProjectView>(P(pid)),
   createProject: (input: CreateProjectInput) =>
@@ -472,7 +488,7 @@ export const api = {
   listN8nWorkflows: () => http<N8nWorkflowsResult>(`${V1}/n8n/workflows`),
   refreshN8nWorkflows: () =>
     http<N8nWorkflowsResult>(`${V1}/n8n/workflows/refresh`, { method: "POST" }),
-  whoami: () => http<Whoami>(`${V1}/whoami`),
+  whoami: () => cachedGet("whoami", () => http<Whoami>(`${V1}/whoami`), 30_000),
   listClients: () => http<{ clients: PublicClient[] }>(`${V1}/auth/clients`).then((r) => r.clients),
   createClient: (input: {
     name: string;
