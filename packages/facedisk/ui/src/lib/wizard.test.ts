@@ -10,6 +10,11 @@ import {
   blockedTools,
   defaultAgent,
   draftFailureActions,
+  draftWait,
+  elapsedText,
+  prepareRunner,
+  RUNNER_STARTED_NOTICE,
+  DRAFT_PENDING_GRACE_MS,
   draftFailureReason,
   readyTools,
   dismissWizard,
@@ -278,5 +283,104 @@ describe("project answers kept with the project", () => {
   it("hands the saved answers back to prefill the next plan", () => {
     expect(savedAbout({ planDefaults: answers })).toEqual(answers);
     expect(savedAbout({})).toBeNull();
+  });
+});
+
+describe("draftWait", () => {
+  const paused = {
+    kind: "paused",
+    text: "Paused · 1 queued",
+    toggle: { label: "Start", disabled: false },
+  };
+  it("names the state and the elapsed time", () => {
+    expect(draftWait({ status: "pending", elapsedMs: 5_000, topbar: paused })).toEqual({
+      state: "Waiting in the queue",
+      elapsed: "5 s",
+    });
+    expect(draftWait({ status: "running", elapsedMs: 65_000, topbar: null })).toEqual({
+      state: "The agent is working",
+      elapsed: "1 min 05 s",
+    });
+  });
+  it("explains a pending draft only after the grace time", () => {
+    const late = draftWait({
+      status: "pending",
+      elapsedMs: DRAFT_PENDING_GRACE_MS + 1,
+      topbar: paused,
+    });
+    expect(late.why).toBe("Paused · 1 queued");
+    expect(late.action).toBe("start-runner");
+  });
+  it("passes on the usage-limit reset time and offers no action for it", () => {
+    const w = draftWait({
+      status: "pending",
+      elapsedMs: 60_000,
+      topbar: {
+        kind: "waiting",
+        text: "Waiting for usage-limit reset, resumes at 14:05",
+        toggle: { label: "Pause", disabled: false },
+      },
+    });
+    expect(w.why).toContain("resumes at 14:05");
+    expect(w.action).toBeUndefined();
+  });
+  it("sends a missing agent to the setup check", () => {
+    const w = draftWait({
+      status: "pending",
+      elapsedMs: 60_000,
+      topbar: {
+        kind: "blocked",
+        text: "Cannot run: no agent ready",
+        toggle: { label: "Start", disabled: true },
+      },
+    });
+    expect(w.action).toBe("fix-agents");
+  });
+  it("says nothing while the runner is busy or idle", () => {
+    const w = draftWait({
+      status: "pending",
+      elapsedMs: 60_000,
+      topbar: { kind: "running", text: "Running", toggle: null },
+    });
+    expect(w.why).toBeUndefined();
+  });
+  it("formats elapsed time", () => {
+    expect(elapsedText(0)).toBe("0 s");
+    expect(elapsedText(125_000)).toBe("2 min 05 s");
+  });
+});
+
+describe("prepareRunner", () => {
+  it("starts a runner that is off and says so", async () => {
+    let started = 0;
+    const r = await prepareRunner({
+      enabled: false,
+      canControl: true,
+      start: async () => void started++,
+    });
+    expect(started).toBe(1);
+    expect(r).toEqual({ ok: true, notice: RUNNER_STARTED_NOTICE });
+  });
+  it("leaves a running runner alone, and an unreadable status", async () => {
+    const start = async () => {
+      throw new Error("no");
+    };
+    expect(await prepareRunner({ enabled: true, canControl: true, start })).toEqual({ ok: true });
+    expect(await prepareRunner({ enabled: null, canControl: false, start })).toEqual({ ok: true });
+  });
+  it("blocks with the reason when the key may not start it", async () => {
+    const r = await prepareRunner({ enabled: false, canControl: false, start: async () => {} });
+    expect(r.ok).toBe(false);
+    expect(!r.ok && r.problem).toContain("runner:control");
+  });
+  it("reports a failed start", async () => {
+    const r = await prepareRunner({
+      enabled: false,
+      canControl: true,
+      start: async () => {
+        throw new Error("boom");
+      },
+    });
+    expect(r).toEqual({ ok: false, problem: "Could not start the runner: boom" });
   });
 });

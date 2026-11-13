@@ -1,5 +1,5 @@
 import type { DoctorCheck, DoctorFixPage, HarnessStatus } from "../api-types.js";
-import type { Route, SettingsPageId } from "./route.js";
+import { formatRoute, parseRoute, type Route, type SettingsPageId } from "./route.js";
 
 /**
  * What the readiness gate says:
@@ -64,4 +64,35 @@ export function continueRoute(
     if (entry.name === "inbox" || !knownPids || knownPids.includes(entry.pid)) return entry;
   }
   return selectedPid ? { name: "overview", pid: selectedPid } : null;
+}
+
+const ENTRY_KEY = "boof.doctor.entry";
+
+/** Remembers the page the app was opened on while the doctor shows, so a reload keeps it. */
+export function rememberEntry(storage: Pick<Storage, "setItem">, route: Route | null): void {
+  if (!route || route.name === "doctor") return;
+  try {
+    storage.setItem(ENTRY_KEY, formatRoute(route));
+  } catch {
+    /* storage may be unavailable: Continue then falls back to the Overview */
+  }
+}
+
+/** The remembered entry page, or null. */
+export function recallEntry(storage: Pick<Storage, "getItem">): Route | null {
+  try {
+    const path = storage.getItem(ENTRY_KEY);
+    const route = path ? parseRoute(path) : null;
+    return route && route.name !== "doctor" ? route : null;
+  } catch {
+    return null;
+  }
+}
+
+export function forgetEntry(storage: Pick<Storage, "removeItem">): void {
+  try {
+    storage.removeItem(ENTRY_KEY);
+  } catch {
+    /* nothing to forget */
+  }
 }

@@ -2,17 +2,19 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { Project } from "@boof/heart/schema";
 import { cn } from "@/lib/utils";
 import { Button } from "@/ui/button";
-import { api, ApiError, type TaskView } from "../api.js";
+import { api, type TaskView } from "../api.js";
 import type { AppData } from "../useAppData.js";
 import { act, errorMessage } from "../lib/act.js";
 import { formatRoute } from "../lib/route.js";
 import { useHeldScopes } from "../lib/useHeldScopes.js";
 import { useRunnerOverview } from "../lib/useRunnerOverview.js";
+import { setRunner } from "../lib/runner-toggle.js";
 import type { HarnessesState } from "../useHarnesses.js";
 import { useRunningStep } from "../lib/useRunningStep.js";
 import {
   itemLabel,
   nextStep,
+  pendingCount,
   stopAllRunning,
   waitingForReset,
   stopSummary,
@@ -34,19 +36,6 @@ const KIND_STYLE = {
   blocked: "border-attention/40 bg-attention/15 text-ink",
   unknown: "border-line bg-surface text-ink-muted",
 } as const;
-
-/** Pause and Start: the global switch, or the selected project for a project-restricted key. */
-async function setRunner(enable: boolean, pid: string | null): Promise<void> {
-  try {
-    await api.setRunnerEnabled(enable);
-  } catch (err) {
-    if (err instanceof ApiError && err.code === "forbidden_project" && pid) {
-      await (enable ? api.resumeProject(pid) : api.pauseProject(pid));
-      return;
-    }
-    throw err;
-  }
-}
 
 /** One bar above every screen: what the runner does, and Pause, Start and Stop. */
 export function TopBar({
@@ -156,6 +145,7 @@ export function TopBar({
     items,
     held,
     step,
+    ...(pid ? { localPending: { [pid]: pendingCount(data.tasks) } } : {}),
   });
 
   const afterChange = () => Promise.all([reload(), data.refresh()]);
@@ -190,7 +180,13 @@ export function TopBar({
     await afterChange();
   };
 
-  const queued = overview ? overview.projects.reduce((n, p) => n + (p.counts.pending ?? 0), 0) : 0;
+  const localPending = pid ? pendingCount(data.tasks) : 0;
+  const queued = overview
+    ? overview.projects.reduce(
+        (n, p) => n + Math.max(p.counts.pending ?? 0, p.id === pid ? localPending : 0),
+        0,
+      )
+    : 0;
   const next = nextStep({
     kind: state.kind,
     queued,

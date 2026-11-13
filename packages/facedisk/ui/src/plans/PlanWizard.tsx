@@ -14,6 +14,10 @@ import {
   blockedTools,
   draftFailureActions,
   draftFailureReason,
+  draftWait,
+  prepareRunner,
+  RUNNER_DENIED_REASON,
+  RUNNER_STARTED_NOTICE,
   readyTools,
   aboutDone,
   savedAbout,
@@ -40,6 +44,10 @@ import { useLive } from "../useLive.js";
 import { useHarnesses } from "../useHarnesses.js";
 import type { AppData } from "../useAppData.js";
 import { WizardTaskList } from "./WizardTaskList.js";
+import { useRunnerOverview } from "../lib/useRunnerOverview.js";
+import { useHeldScopes } from "../lib/useHeldScopes.js";
+import { setRunner } from "../lib/runner-toggle.js";
+import { canControlRunner, topbarState } from "../lib/topbar.js";
 
 const FIELD = "text-[length:var(--text-body)] font-medium";
 const ACTIVE = new Set(["pending", "running", "action"]);
@@ -90,6 +98,11 @@ export function PlanWizard({
   const [task, setTask] = useState<TaskView | null>(null);
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [now, setNow] = useState(() => Date.now());
+  const [budgetReset, setBudgetReset] = useState<string | null>(null);
+  const held = useHeldScopes();
+  const runner = useRunnerOverview();
   const draftRef = useRef(draft);
   draftRef.current = draft;
 
@@ -268,6 +281,33 @@ export function PlanWizard({
     startTaskList();
   };
 
+  /**
+   * The draft is a task like any other and only the runner starts it: turn the runner on when it
+   * is off (and say so), or say why it cannot be turned on. False means do not queue.
+   */
+  const ensureRunner = async (): Promise<boolean> => {
+    let enabled: boolean | null = null;
+    try {
+      enabled = (await api.runnerStatus()).enabled;
+    } catch {
+      /* unreadable: the draft is queued and the wait panel explains */
+    }
+    const prep = await prepareRunner({
+      enabled,
+      canControl: canControlRunner(held),
+      start: () => setRunner(true, pid),
+    });
+    if (!prep.ok) {
+      setProblem(prep.problem);
+      return false;
+    }
+    if (prep.notice) {
+      setNotice(prep.notice);
+      await runner.reload();
+    }
+    return true;
+  };
+
   const draftTasks = async (note?: string) => {
     setBusy(true);
     setProblem(null);
@@ -290,6 +330,7 @@ export function PlanWizard({
         current = saved;
         setPlan(saved);
       }
+      if (!(await ensureRunner())) return;
       const r = await act(
         () =>
           api.draftPlanGoals(pid, current.id, {
@@ -348,6 +389,54 @@ export function PlanWizard({
     } finally {
       setBusy(false);
     }
+  };
+
+  // Elapsed time and the reason a draft does not start, while it is waiting or working.
+  useEffect(() => {
+    if (!drafting) return;
+    setNow(Date.now());
+    const id = setInterval(() => setNow(Date.now()), 1_000);
+    return () => clearInterval(id);
+  }, [drafting]);
+  const overview = runner.denied ? null : runner.overview;
+  const budgetSpent = (overview?.budgetExceeded.length ?? 0) > 0;
+  useEffect(() => {
+    if (!budgetSpent || !drafting) return setBudgetReset(null);
+    let live = true;
+    api.budget().then(
+      (b) => live && setBudgetReset(b.resetsAt),
+      () => undefined,
+    );
+    return () => {
+      live = false;
+    };
+  }, [budgetSpent, drafting]);
+  const wait = task
+    ? draftWait({
+        status: task.frontmatter.status,
+        elapsedMs: Math.max(0, now - (Date.parse(task.frontmatter.created) || now)),
+        topbar: overview
+          ? topbarState({
+              overview,
+              fallbackRunning: [],
+              items: new Map(),
+              held,
+              noHarness: harnesses.status !== null && !harnesses.status.anyReady,
+              resetAt: budgetSpent ? budgetReset : null,
+            })
+          : null,
+      })
+    : null;
+  const startRunnerNow = async () => {
+    if (!canControlRunner(held)) return setProblem(RUNNER_DENIED_REASON);
+    try {
+      await setRunner(true, pid);
+    } catch (err) {
+      return setProblem(`Could not start the runner: ${errorMessage(err)}`);
+    }
+    setProblem(null);
+    setNotice(RUNNER_STARTED_NOTICE);
+    await runner.reload();
   };
 
   const failureReason = task ? draftFailureReason(task) : null;
@@ -521,6 +610,11 @@ export function PlanWizard({
               </div>
             </div>
           )}
+          {notice && (
+            <p role="status" className="m-0 text-ink-muted">
+              {notice}
+            </p>
+          )}
           {task && (
             <div
               className="flex flex-col gap-2 rounded-lg border border-line p-3"
@@ -535,6 +629,28 @@ export function PlanWizard({
                     ? "The agent finished drafting."
                     : `The agent ${task.frontmatter.status}.`}
               </div>
+              {drafting && wait && (
+                <div className="flex flex-col gap-1 text-ink-muted">
+                  <span>
+                    {wait.state} · {wait.elapsed}
+                  </span>
+                  {wait.why && <span role="status">Not starting yet: {wait.why}</span>}
+                  {wait.action === "start-runner" && (
+                    <div>
+                      <Button variant="outline" onClick={() => void startRunnerNow()}>
+                        Start the runner
+                      </Button>
+                    </div>
+                  )}
+                  {wait.action === "fix-agents" && (
+                    <div>
+                      <Button variant="outline" onClick={() => navigate({ name: "doctor" })}>
+                        Fix the agent setup
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              )}
               {failureReason && (
                 <div className="flex flex-col gap-2">
                   <p role="alert" className="m-0 text-danger">

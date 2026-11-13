@@ -22,7 +22,14 @@ import { AddProjectGate } from "./components/Projects.js";
 import { AppShell } from "./shell/AppShell.js";
 import { useHarnesses } from "./useHarnesses.js";
 import { DoctorPage } from "./doctor/DoctorPage.js";
-import { continueRoute, gateOf, reachableWhileBlocked } from "./lib/doctor.js";
+import {
+  continueRoute,
+  forgetEntry,
+  gateOf,
+  reachableWhileBlocked,
+  recallEntry,
+  rememberEntry,
+} from "./lib/doctor.js";
 import { isDesktop } from "./desktop.js";
 import {
   correctedRoute,
@@ -65,7 +72,10 @@ export function App() {
   // is where Continue goes. Readiness itself is never stored: it is asked for again.
   const harnesses = useHarnesses();
   const gate = gateOf(harnesses);
-  const entry = useRef<Route | null>(route);
+  // A reload while the doctor shows lands on /doctor: the remembered page is the entry then.
+  const entry = useRef<Route | null>(
+    route && route.name !== "doctor" ? route : recallEntry(window.sessionStorage),
+  );
   const [doctorSeen, setDoctorSeen] = useState(false);
   const [passed, setPassed] = useState(false);
   // useProjects needs `settings` (from useAppData) and useAppData needs the selected id and the
@@ -162,7 +172,13 @@ export function App() {
     if (routeName === "doctor") setDoctorSeen(true);
   }, [routeName]);
   useEffect(() => {
-    if (showDoctor && routeName !== "doctor") navigate({ name: "doctor" }, { replace: true });
+    if (showDoctor && routeName !== "doctor") {
+      // Locked mid-session: the page the user was on is where Continue returns to.
+      if (route) entry.current = route;
+      rememberEntry(window.sessionStorage, entry.current);
+      navigate({ name: "doctor" }, { replace: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showDoctor, routeName, navigate]);
   // Coming back from Settings after a fix: ask again instead of trusting the last answer.
   const key = routeKey(route);
@@ -174,6 +190,7 @@ export function App() {
   }, [key, gate, refreshHarnesses]);
   const goOn = () => {
     setPassed(true);
+    forgetEntry(window.sessionStorage);
     const to = continueRoute(entry.current, selected?.id ?? null, projectIds);
     navigate(to ?? { name: "inbox" }, { replace: true });
   };

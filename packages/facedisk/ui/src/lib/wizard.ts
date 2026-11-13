@@ -352,3 +352,87 @@ export function shouldAutoOpen(o: {
 }): boolean {
   return o.loaded && o.taskCount === 0 && o.planCount === 0 && !o.dismissed;
 }
+
+/** How long a draft task may stay `pending` before the wizard explains why. */
+export const DRAFT_PENDING_GRACE_MS = 20_000;
+
+export const RUNNER_STARTED_NOTICE =
+  "Started the runner so the agent can draft. You can pause it in the top bar.";
+
+/** What to say when the runner is off and the key may not start it. */
+export const RUNNER_DENIED_REASON =
+  "The runner is off, and this key may not start it (it needs runner:control or settings:write). Ask an admin to start the runner, then press Draft tasks again.";
+
+/** "42 s" or "3 min 05 s". */
+export function elapsedText(ms: number): string {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  if (s < 60) return `${s} s`;
+  return `${Math.floor(s / 60)} min ${String(s % 60).padStart(2, "0")} s`;
+}
+
+export interface DraftWaitInput {
+  status: string;
+  /** Milliseconds since the task was queued. */
+  elapsedMs: number;
+  /** The topbar's state for the same moment (null while the overview is unknown). */
+  topbar: {
+    kind: string;
+    text: string;
+    toggle: null | { label: string; disabled: boolean };
+  } | null;
+}
+
+export interface DraftWait {
+  /** The state, in words: queue, working, or waiting for answers. */
+  state: string;
+  elapsed: string;
+  /** Why a pending draft is not starting, once it has waited longer than the grace time. */
+  why?: string;
+  action?: "start-runner" | "fix-agents";
+}
+
+/**
+ * The draft task's state for the wizard. A task that stays `pending` longer than the grace time
+ * while the runner is off, paused, budget-blocked or has no ready agent says why (the topbar's
+ * own words) and offers the matching action.
+ */
+export function draftWait(input: DraftWaitInput): DraftWait {
+  const elapsed = elapsedText(input.elapsedMs);
+  if (input.status === "running") return { state: "The agent is working", elapsed };
+  if (input.status === "action") return { state: "The agent has questions", elapsed };
+  const out: DraftWait = { state: "Waiting in the queue", elapsed };
+  const t = input.topbar;
+  if (input.elapsedMs <= DRAFT_PENDING_GRACE_MS || !t) return out;
+  if (t.kind === "paused" || t.kind === "blocked" || t.kind === "waiting") {
+    out.why = t.text;
+    if (t.kind === "blocked" && /no agent ready/.test(t.text)) out.action = "fix-agents";
+    else if (t.toggle?.label === "Start" && !t.toggle.disabled) out.action = "start-runner";
+    else if (t.kind === "paused" && t.toggle?.disabled) out.action = "fix-agents";
+  }
+  return out;
+}
+
+export type RunnerPrep = { ok: true; notice?: string } | { ok: false; problem: string };
+
+/**
+ * Before the draft task is queued: a runner that is off is started (and the user told), unless
+ * the key may not do that, which is a blocking message instead of an endless wait. `enabled` is
+ * null when the status could not be read: the draft is queued and the wait panel explains.
+ */
+export async function prepareRunner(input: {
+  enabled: boolean | null;
+  canControl: boolean;
+  start: () => Promise<void>;
+}): Promise<RunnerPrep> {
+  if (input.enabled !== false) return { ok: true };
+  if (!input.canControl) return { ok: false, problem: RUNNER_DENIED_REASON };
+  try {
+    await input.start();
+  } catch (err) {
+    return {
+      ok: false,
+      problem: `Could not start the runner: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
+  return { ok: true, notice: RUNNER_STARTED_NOTICE };
+}

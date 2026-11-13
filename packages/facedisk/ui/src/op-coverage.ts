@@ -24,10 +24,10 @@ export const OP_COVERAGE: Record<string, { where: string } | { none: string }> =
     where: "unarchiveProject \u2014 ArchivedProjects (restore an archived project)",
   },
   "projects.pause": {
-    where: "pauseProject \u2014 TopBar (Pause for a project-restricted key)",
+    where: "pauseProject \u2014 runner-toggle (Pause for a project-restricted key)",
   },
   "projects.resume": {
-    where: "resumeProject \u2014 TopBar (Start for a project-restricted key)",
+    where: "resumeProject \u2014 runner-toggle (Start for a project-restricted key)",
   },
   "projects.delete": { where: "deleteProject \u2014 ArchivedProjects (purge an archived project)" },
   "projects.usage": { where: "projectUsage \u2014 BudgetsPage (project usage)" },
@@ -122,7 +122,7 @@ export const OP_COVERAGE: Record<string, { where: string } | { none: string }> =
     where: "runnerOverview \u2014 useRunnerOverview (the topbar)",
   },
   "runner.setEnabled": {
-    where: "setRunnerEnabled \u2014 TopBar (Pause and Start)",
+    where: "setRunnerEnabled \u2014 runner-toggle (the topbar Pause and Start, and the wizard)",
   },
   "actions.list": { where: "actions \u2014 useAppData (tasks that need an answer)" },
   "commands.list": { where: "listCommands \u2014 CommandTemplates, TaskForm (command templates)" },
