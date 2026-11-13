@@ -15,6 +15,7 @@ import {
 } from "@boof/owlish";
 import { appendFile, readFile, realpath, rm, stat } from "node:fs/promises";
 import { homedir } from "node:os";
+import { gitCheck, writableDirCheck, type DoctorCheck, type ToolReadiness } from "./doctor.js";
 import { isAbsolute, join, resolve } from "node:path";
 import {
   agentStatus,
@@ -49,6 +50,7 @@ import {
   expandHome,
   isInsidePath,
   resolveProjectsRoot,
+  sandboxStatusFor,
   resolveUnbornPath,
   SettingsStore,
   securitySettings,
@@ -1897,37 +1899,149 @@ export class TaskService {
   }
 
   /**
-   * Which tools are installed. Free: no prompt. Cached for five minutes; `refresh` re-checks, but
-   * a check younger than ten seconds is reused.
+   * Which tools are installed and ready to start, plus the setup checks. Free: no prompt. Cached
+   * for five minutes; `refresh` re-checks, but a check younger than ten seconds is reused.
    */
-  async harnesses(
-    refresh = false,
-    projectId?: string,
-  ): Promise<{
-    tools: Record<string, InstallResult & { displayName: string; startBlock?: string }>;
-    anyInstalled: boolean;
-    checkedAt: string;
-  }> {
+  async harnesses(refresh = false, projectId?: string): Promise<HarnessStatusResult> {
+    const { tools, oldest, settings } = await this.readyTools(refresh, projectId);
+    const pool = await this.poolStatus();
+    const anyReady = Object.values(tools).some((t) => t.ready);
+    const checks = await this.doctorChecks(settings, pool, tools, anyReady, refresh);
+    return {
+      tools,
+      anyInstalled: Object.values(tools).some((t) => t.installed),
+      anyReady,
+      gateway: {
+        status: pool.status,
+        message: gatewayMessage(pool.status, pool.reason),
+      },
+      checks,
+      checkedAt: new Date(oldest).toISOString(),
+    };
+  }
+
+  /** Every tool with its install result and readiness: no gateway request, no prompt. */
+  private async readyTools(refresh: boolean, projectId?: string, includeHidden = false) {
     const installs = await this.catalog.installedAll(refresh ? 10_000 : 5 * 60_000);
-    const tools: Record<string, InstallResult & { displayName: string; startBlock?: string }> = {};
+    const tools: HarnessStatusResult["tools"] = {};
     let oldest = Date.now();
+    const settings = await this.loadSettings();
+    const anyProjectKey = await this.anyProjectKey();
     for (const info of this.catalog.list()) {
       const found = installs[info.id];
-      if (!found || found.hidden) continue;
+      if (!found || (found.hidden && !includeHidden)) continue;
       const { checkedAt, hidden: _hidden, ...install } = found;
       oldest = Math.min(oldest, Date.parse(checkedAt));
-      tools[info.id] = { displayName: info.displayName, ...install };
+      tools[info.id] = {
+        displayName: info.displayName,
+        ...install,
+        ...toolReadiness(info.id, info.displayName, install.installed, info.unavailableReason, {
+          gatewayConfigured: !!settings.owlish,
+          anyProjectKey,
+          message: install.message,
+        }),
+      };
       // With a project: why a task of this project could not start with this tool.
       if (projectId && install.installed) {
         const block = await this.draftStartBlock(projectId, info.id);
         if (block) tools[info.id].startBlock = block;
       }
     }
-    return {
-      tools,
-      anyInstalled: Object.values(tools).some((t) => t.installed),
-      checkedAt: new Date(oldest).toISOString(),
+    return { tools, oldest, settings };
+  }
+
+  private gitCheckCache?: { at: number; value: DoctorCheck };
+
+  private async doctorChecks(
+    settings: Settings,
+    pool: PoolStatus,
+    tools: HarnessStatusResult["tools"],
+    anyReady: boolean,
+    refresh: boolean,
+  ): Promise<DoctorCheck[]> {
+    if (!this.gitCheckCache || refresh || Date.now() - this.gitCheckCache.at > 5 * 60_000)
+      this.gitCheckCache = { at: Date.now(), value: await gitCheck() };
+    const ready = Object.values(tools).filter((t) => t.ready).length;
+    const firstBlocked = Object.values(tools).find((t) => !t.ready);
+    const agents: DoctorCheck = anyReady
+      ? { id: "agents", label: "Coding agents", status: "pass", message: `${ready} ready` }
+      : {
+          id: "agents",
+          label: "Coding agents",
+          status: "fail",
+          message: "No coding agent is ready to run tasks.",
+          ...(firstBlocked?.fixHint ? { fixHint: firstBlocked.fixHint } : {}),
+          fixPage: firstBlocked?.fixPage ?? "agents",
+        };
+    const gateway: DoctorCheck = !settings.owlish
+      ? {
+          id: "gateway",
+          label: "better-ccflare gateway",
+          status: anyReady ? "warn" : "fail",
+          message: "Not configured.",
+          fixHint: "Configure the better-ccflare gateway in Settings.",
+          fixPage: "gateway",
+        }
+      : pool.status === "ok" || pool.status === "degraded"
+        ? {
+            id: "gateway",
+            label: "better-ccflare gateway",
+            status: pool.status === "ok" ? "pass" : "warn",
+            message: gatewayMessage(pool.status, pool.reason),
+            ...(pool.status === "ok" ? {} : { fixPage: "gateway" as const }),
+          }
+        : {
+            id: "gateway",
+            label: "better-ccflare gateway",
+            status: "fail",
+            message: gatewayMessage(pool.status, pool.reason),
+            fixHint: "Check the gateway address and that it is running.",
+            fixPage: "gateway",
+          };
+    const sb = sandboxStatusFor(settings.runner.sandbox, process.platform);
+    const sandbox: DoctorCheck = {
+      id: "sandbox",
+      label: "Sandbox",
+      status: sb.state === "unavailable" ? "warn" : "pass",
+      message:
+        sb.state === "off"
+          ? "Off."
+          : sb.state === "ok"
+            ? "Enforcing."
+            : sb.reason || "Not available on this computer.",
+      ...(sb.state === "unavailable" ? { fixPage: "sandbox" as const } : {}),
     };
+    return [
+      agents,
+      gateway,
+      await writableDirCheck("projectsRoot", "Projects folder", resolveProjectsRoot(settings)),
+      this.gitCheckCache.value,
+      await writableDirCheck("dataRoot", "Data folder", this.root),
+      sandbox,
+    ];
+  }
+
+  /** Whether any active project stores its own Anthropic API key. */
+  private async anyProjectKey(): Promise<boolean> {
+    for (const project of await this.listProjects())
+      if (!project.archived && (await this.hasProjectKey(project.id))) return true;
+    return false;
+  }
+
+  /**
+   * Refuses to start work when no coding agent is ready: 409 `no_agent_ready`, with the fix.
+   * Free; it reads the cached install check.
+   */
+  async requireReadyAgent(): Promise<void> {
+    // Hidden tools (the mock tool of tests and dev runs) can run tasks, so they count here.
+    const { tools } = await this.readyTools(false, undefined, true);
+    if (Object.values(tools).some((t) => t.ready)) return;
+    const hint = Object.values(tools).find((t) => t.fixHint)?.fixHint;
+    throw new OpError(
+      409,
+      `No coding agent is ready to run tasks.${hint ? ` ${hint}` : " Open the Doctor page to fix it."}`,
+      "no_agent_ready",
+    );
   }
 
   /**
@@ -1965,6 +2079,59 @@ export class TaskService {
   cachedModels(): Readonly<Record<string, readonly string[]>> {
     return this.catalog.cachedModels();
   }
+}
+
+export interface HarnessStatusResult {
+  tools: Record<
+    string,
+    InstallResult & { displayName: string; startBlock?: string } & ToolReadiness
+  >;
+  anyInstalled: boolean;
+  anyReady: boolean;
+  gateway: { status: PoolStatus["status"]; message: string };
+  checks: DoctorCheck[];
+  checkedAt: string;
+}
+
+function gatewayMessage(status: PoolStatus["status"], reason: string | null): string {
+  if (status === "absent") return "Not configured.";
+  if (status === "ok") return "Reachable; accounts are ready.";
+  return reason ?? (status === "unreachable" ? "Not reachable." : `Pool ${status}.`);
+}
+
+/** Whether a tool can start, why, and where to fix it. Never sends a prompt. */
+function toolReadiness(
+  id: string,
+  displayName: string,
+  installed: boolean,
+  unavailableReason: string | undefined,
+  ctx: { gatewayConfigured: boolean; anyProjectKey: boolean; message: string },
+): ToolReadiness {
+  if (unavailableReason) return { ready: false, readyReason: unavailableReason, fixPage: "agents" };
+  if (!installed)
+    return {
+      ready: false,
+      readyReason: `${displayName} is not installed: ${ctx.message}`,
+      fixHint: `Install ${id}.`,
+      fixPage: "agents",
+    };
+  if (id === "claude-agent") {
+    if (!ctx.gatewayConfigured && !ctx.anyProjectKey)
+      return {
+        ready: false,
+        readyReason: "No better-ccflare gateway is configured and no Anthropic API key is set.",
+        fixHint: "Configure the better-ccflare gateway in Settings, or set an Anthropic API key.",
+        fixPage: "gateway",
+      };
+    return {
+      ready: true,
+      readyReason: ctx.gatewayConfigured ? "Uses the better-ccflare gateway." : "Uses an API key.",
+    };
+  }
+  return {
+    ready: true,
+    readyReason: `Installed. If it asks you to sign in, run ${id} once in a terminal.`,
+  };
 }
 
 function projectNotFound(id: string): OpError {

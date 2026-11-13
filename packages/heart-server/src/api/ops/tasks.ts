@@ -282,6 +282,7 @@ export const tasksCreate = defineOp({
   summary: taskResult,
   handler: async (ctx, { projectId, ...body }) => {
     const svc = await requireProject(ctx, projectId);
+    if (body.status === "pending") await ctx.services.requireReadyAgent();
     const { task, warnings } = await svc.createWithWarnings(body, ctx.principal);
     return {
       ...taskView(ctx, projectId, task, false, await svc.hierarchy()),
@@ -365,6 +366,7 @@ export const tasksQueue = defineOp({
   summary: taskResult,
   handler: async (ctx, input) => {
     const svc = await requireProject(ctx, input.projectId);
+    await ctx.services.requireReadyAgent();
     const { task, warnings, index } = await svc.updateWithWarnings(
       input.taskId,
       { status: "pending" },
@@ -435,6 +437,7 @@ export const tasksRetry = defineOp({
   summary: taskResult,
   handler: async (ctx, input) => {
     const svc = await requireProject(ctx, input.projectId);
+    await ctx.services.requireReadyAgent();
     return taskView(ctx, input.projectId, await svc.retry(input.taskId, ctx.principal));
   },
 });

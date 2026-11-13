@@ -8,16 +8,34 @@ import { HarnessPanel } from "./HarnessPanel.js";
 
 const status: HarnessStatus = {
   anyInstalled: true,
+  anyReady: true,
+  gateway: { status: "ok", message: "" },
+  checks: [],
   checkedAt: "2026-11-12T00:00:00Z",
   tools: {
-    "claude-code": { displayName: "Claude Code", installed: true, version: "2.1.0", message: "ok" },
+    "claude-code": {
+      displayName: "Claude Code",
+      installed: true,
+      version: "2.1.0",
+      message: "ok",
+      ready: true,
+      readyReason: "Installed.",
+    },
     opencode: {
       displayName: "OpenCode",
       installed: true,
       foundOffPath: "/opt/oc/opencode",
       message: "found off PATH",
+      ready: true,
+      readyReason: "Installed.",
     },
-    codex: { displayName: "Codex", installed: false, message: "not found" },
+    codex: {
+      displayName: "Codex",
+      installed: false,
+      message: "not found",
+      ready: false,
+      readyReason: "Codex is not installed",
+    },
   },
 };
 const html = (el: ReactElement) => renderToStaticMarkup(el);
@@ -27,7 +45,7 @@ describe("HarnessPanel", () => {
     const out = html(
       createElement(HarnessPanel, { status, loading: false, failed: false, onRefresh: () => {} }),
     );
-    expect(out).toContain("installed");
+    expect(out).toContain("ready");
     expect(out).toContain("found, not on PATH");
     expect(out).toContain("/opt/oc/opencode");
     expect(out).toContain("not found");

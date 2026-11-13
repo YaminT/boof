@@ -46,7 +46,7 @@ export interface TopbarInput {
   held: ReadonlySet<Scope> | "all";
   /** The step of the first running task, if known. */
   step?: string | null;
-  /** True when no harness is installed (wired in by a later task). */
+  /** True when no coding agent is ready to run (none installed, or no gateway or API key). */
   noHarness?: boolean;
   /** When the spent budget or the exhausted pool frees up again (ISO), if known. */
   resetAt?: string | null;
@@ -131,7 +131,7 @@ export function topbarState(input: TopbarInput): TopbarState {
     return {
       kind: "paused",
       text: `Paused · ${queued} queued`,
-      toggle: toggle("Start"),
+      toggle: toggle("Start", input.noHarness ? "no agent ready" : undefined),
       stop: false,
       running,
     };
@@ -175,7 +175,7 @@ export function topbarState(input: TopbarInput): TopbarState {
 }
 
 function blockedReason(o: RunnerOverview, noHarness: boolean): string | null {
-  if (noHarness) return "no harness installed";
+  if (noHarness) return "no agent ready";
   if (o.projects.length > 0 && o.projects.every((p) => p.paused)) return "all projects paused";
   return null;
 }

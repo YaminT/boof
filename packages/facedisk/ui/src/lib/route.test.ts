@@ -76,6 +76,11 @@ describe("parseRoute", () => {
     });
   });
 
+  it("parses the doctor page", () => {
+    expect(parseRoute("doctor")).toEqual({ name: "doctor" });
+    expect(parseRoute("doctor/x")).toBeNull();
+  });
+
   it("parses the inbox", () => {
     expect(parseRoute("inbox")).toEqual({ name: "inbox" });
   });
@@ -136,6 +141,7 @@ describe("formatRoute", () => {
     { name: "settings", pid: "boof", page: "project" },
     { name: "settings", pid: "boof", page: "keys" },
     { name: "inbox" },
+    { name: "doctor" },
   ];
 
   it("round-trips every route", () => {

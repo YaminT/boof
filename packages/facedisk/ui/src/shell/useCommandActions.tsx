@@ -39,6 +39,7 @@ export function useCommandActions({
   epics,
   currentTask,
   resetAssistant,
+  agentBlocked,
   mode,
 }: {
   data: AppData;
@@ -51,6 +52,8 @@ export function useCommandActions({
   currentTask: TaskView | null;
   /** Start a new assistant conversation (`/new`). */
   resetAssistant: () => Promise<void> | void;
+  /** True while no coding agent is ready. */
+  agentBlocked?: boolean;
   mode: "toast" | "throw";
 }): { actions: CommandAction[]; stopDialog: ReactNode } {
   const { setPref } = useTheme();
@@ -75,6 +78,7 @@ export function useCommandActions({
     epics: epics.list,
     currentTask,
     runnerEnabled: data.settings?.runner.enabled ?? false,
+    agentBlocked: agentBlocked === true,
     profiles: data.settings?.profiles ?? [],
     activeProfile: data.settings?.activeProfile ?? null,
     settingsLoaded: !!data.settings,

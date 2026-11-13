@@ -449,6 +449,7 @@ export const runnerSetEnabled = defineOp({
         "forbidden_project",
       );
     }
+    if (input.enabled) await ctx.services.requireReadyAgent();
     const { runner } = await ctx.services.updateSettings(
       { runner: { enabled: input.enabled } },
       ctx.principal,

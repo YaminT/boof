@@ -8,7 +8,7 @@ import { act, errorMessage } from "../lib/act.js";
 import { formatRoute } from "../lib/route.js";
 import { useHeldScopes } from "../lib/useHeldScopes.js";
 import { useRunnerOverview } from "../lib/useRunnerOverview.js";
-import { useHarnesses } from "../useHarnesses.js";
+import type { HarnessesState } from "../useHarnesses.js";
 import { useRunningStep } from "../lib/useRunningStep.js";
 import {
   itemLabel,
@@ -54,15 +54,16 @@ export function TopBar({
   projects,
   selected,
   needsYou,
+  harnesses,
 }: {
   data: AppData;
   projects: Project[] | null;
   selected: Project | null;
   needsYou: number;
+  harnesses: HarnessesState;
 }) {
   const held = useHeldScopes();
   const { overview, denied, stale, reload } = useRunnerOverview();
-  const harnesses = useHarnesses();
   const [budgetReset, setBudgetReset] = useState<string | null>(null);
   const [, bump] = useState(0);
   const [confirming, setConfirming] = useState(false);
@@ -148,7 +149,7 @@ export function TopBar({
     };
   }, [budgetSpent, waiting]);
   const state = topbarState({
-    noHarness: harnesses.status !== null && !harnesses.status.anyInstalled,
+    noHarness: harnesses.status !== null && !harnesses.status.anyReady,
     resetAt: budgetSpent ? budgetReset : null,
     overview: denied ? null : overview,
     fallbackRunning,
@@ -282,6 +283,14 @@ export function TopBar({
               ))}
             </select>
           ))}
+        {harnesses.status !== null && !harnesses.status.anyReady && (
+          <a
+            href={formatRoute({ name: "doctor" })}
+            className="shrink-0 font-medium text-inherit underline"
+          >
+            Fix
+          </a>
+        )}
         {needsYou > 0 && (
           <a
             href={formatRoute({ name: "inbox" })}

@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AuthStore, LOCAL_PRINCIPAL } from "@boof/heart";
+import { ProjectStore } from "@boof/heart";
 import { MockTool, ToolRegistry, type Tool } from "@boof/runner";
 import type { OpContext } from "../define-op.js";
 import { getOp } from "../registry.js";
@@ -124,5 +125,121 @@ describe("harnesses.status operation", () => {
       if (saved === undefined) delete process.env.BOOF_SHOW_MOCK_TOOL;
       else process.env.BOOF_SHOW_MOCK_TOOL = saved;
     }
+  });
+});
+
+const agentSdk = (): Tool =>
+  ({ ...fake(true), id: "claude-agent", displayName: "Claude Agent" }) as Tool;
+
+const status = () => getOp("harnesses.status")!.execute(ctx, {}) as Promise<any>;
+
+describe("agent readiness", () => {
+  it("an installed tool is ready, with a reason", async () => {
+    await setup(fake(true));
+    const out = await status();
+    expect(out.anyReady).toBe(true);
+    expect(out.tools.fake).toMatchObject({ installed: true, ready: true });
+    expect(out.tools.fake.readyReason).toMatch(/Installed/);
+  });
+
+  it("a tool that is not installed is not ready and says how to fix it", async () => {
+    await setup(fake(false));
+    const out = await status();
+    expect(out.anyReady).toBe(false);
+    expect(out.tools.fake).toMatchObject({ ready: false, fixPage: "agents" });
+    expect(out.tools.fake.fixHint).toMatch(/Install/);
+    expect(out.checks.find((c: any) => c.id === "agents")).toMatchObject({
+      status: "fail",
+      fixPage: "agents",
+    });
+  });
+
+  it("claude-agent needs the gateway or an API key; without either it is not ready", async () => {
+    await setup(agentSdk());
+    const out = await status();
+    expect(out.anyReady).toBe(false);
+    expect(out.tools["claude-agent"].ready).toBe(false);
+    expect(out.tools["claude-agent"].fixHint).toMatch(/better-ccflare gateway/);
+    expect(out.tools["claude-agent"].fixPage).toBe("gateway");
+    expect(out.gateway.status).toBe("absent");
+    expect(out.checks.find((c: any) => c.id === "gateway")).toMatchObject({
+      status: "fail",
+      message: "Not configured.",
+      fixPage: "gateway",
+    });
+  });
+
+  it("a configured gateway makes claude-agent ready without sending a prompt", async () => {
+    await setup(agentSdk());
+    await ctx.services.updateSettings(
+      { owlish: { url: "http://127.0.0.1:9" } } as never,
+      ctx.principal,
+    );
+    const out = await status();
+    expect(out.tools["claude-agent"].ready).toBe(true);
+    expect(out.anyReady).toBe(true);
+    // The gateway is not running here: the row says so, and is not the agents check.
+    expect(out.gateway.status).toBe("unreachable");
+    expect(out.checks.find((c: any) => c.id === "gateway").status).toBe("fail");
+  });
+
+  it("reports the setup checks: git, data folder, projects folder and sandbox", async () => {
+    await setup(fake(true));
+    const out = await status();
+    expect(out.checks.map((c: any) => c.id)).toEqual([
+      "agents",
+      "gateway",
+      "projectsRoot",
+      "git",
+      "dataRoot",
+      "sandbox",
+    ]);
+    expect(out.checks.find((c: any) => c.id === "dataRoot").status).toBe("pass");
+    expect(out.checks.find((c: any) => c.id === "agents").status).toBe("pass");
+    // No secret in the answer.
+    expect(JSON.stringify(out)).not.toMatch(/apiKey|secret|token/i);
+  });
+});
+
+describe("starting work with no agent ready", () => {
+  it("refuses the runner switch with no_agent_ready, and allows pausing", async () => {
+    await setup(fake(false));
+    await expect(getOp("runner.setEnabled")!.execute(ctx, { enabled: true })).rejects.toMatchObject(
+      {
+        status: 409,
+        code: "no_agent_ready",
+      },
+    );
+    await expect(
+      getOp("runner.setEnabled")!.execute(ctx, { enabled: false }),
+    ).resolves.toBeTruthy();
+  });
+
+  it("refuses queueing, retrying and creating a pending task", async () => {
+    await setup(fake(false));
+    const work = await mkdtemp(join(tmpdir(), "boof-harnesses-work-"));
+    try {
+      await new ProjectStore(root).create({ workingDirectory: work, id: "proj" });
+      const call = (op: string, input: object) => getOp(op)!.execute(ctx, input);
+      const task = (await call("tasks.create", { projectId: "proj", title: "T" })) as any;
+      const id = task.frontmatter?.id ?? task.id;
+      const refused = { status: 409, code: "no_agent_ready" };
+      await expect(call("tasks.queue", { projectId: "proj", taskId: id })).rejects.toMatchObject(
+        refused,
+      );
+      await expect(call("tasks.retry", { projectId: "proj", taskId: id })).rejects.toMatchObject(
+        refused,
+      );
+      await expect(
+        call("tasks.create", { projectId: "proj", title: "U", status: "pending" }),
+      ).rejects.toMatchObject(refused);
+    } finally {
+      await rm(work, { recursive: true, force: true });
+    }
+  });
+
+  it("allows starting when an agent is ready", async () => {
+    await setup(fake(true));
+    await expect(getOp("runner.setEnabled")!.execute(ctx, { enabled: true })).resolves.toBeTruthy();
   });
 });
