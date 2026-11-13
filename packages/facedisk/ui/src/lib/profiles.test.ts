@@ -167,13 +167,17 @@ describe("profilesPage", () => {
 });
 
 describe("profileToolOptions", () => {
+  const base = { message: "", readyReason: "" };
   const status = {
     anyInstalled: true,
+    anyReady: true,
+    gateway: { status: "ok" as const, message: "" },
+    checks: [],
     checkedAt: "",
     tools: {
-      "claude-code": { displayName: "Claude Code", installed: true, message: "" },
-      codex: { displayName: "Codex", installed: true, message: "" },
-      opencode: { displayName: "opencode", installed: false, message: "" },
+      "claude-code": { ...base, displayName: "Claude Code", installed: true, ready: true },
+      codex: { ...base, displayName: "Codex", installed: true, ready: true },
+      opencode: { ...base, displayName: "opencode", installed: false, ready: false },
     },
   };
   const all = ["claude-code", "codex", "opencode"];

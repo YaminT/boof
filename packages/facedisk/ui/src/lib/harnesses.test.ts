@@ -13,11 +13,16 @@ const info = (over: Partial<HarnessStatus["tools"][string]> = {}) => ({
   displayName: "X",
   installed: false,
   message: "not found",
+  readyReason: "",
+  ready: over.installed ?? false,
   ...over,
 });
 const status = (tools: HarnessStatus["tools"]): HarnessStatus => ({
   tools,
   anyInstalled: Object.values(tools).some((t) => t.installed),
+  anyReady: Object.values(tools).some((t) => t.ready),
+  gateway: { status: "ok", message: "" },
+  checks: [],
   checkedAt: "2026-11-12T00:00:00Z",
 });
 const s = status({

@@ -43,6 +43,11 @@ export function HarnessPanel({
           No coding agent found. Install one below, then check again.
         </p>
       )}
+      {status && status.anyInstalled && !status.anyReady && (
+        <p className="m-0 text-[length:var(--text-row)] text-attention">
+          No coding agent is ready to run tasks. Fix one below, then check again.
+        </p>
+      )}
       <ul className="m-0 flex list-none flex-col gap-2 p-0">
         {rows.map(({ id, info, state }) => (
           <li
@@ -52,10 +57,12 @@ export function HarnessPanel({
           >
             <strong className="text-[length:var(--text-body)]">{info.displayName}</strong>
             <span
-              className={`font-medium ${state === "installed" ? "text-done" : state === "off-path" ? "text-attention" : "text-ink-muted"}`}
+              className={`font-medium ${state === "installed" && info.ready ? "text-done" : state === "not-found" ? "text-ink-muted" : "text-attention"}`}
             >
               {state === "installed"
-                ? "installed"
+                ? info.ready
+                  ? "ready"
+                  : "installed, not ready"
                 : state === "off-path"
                   ? "found, not on PATH"
                   : "not found"}
@@ -66,9 +73,10 @@ export function HarnessPanel({
                 {info.foundOffPath ?? info.path}
               </span>
             )}
-            {state !== "installed" && (
+            {(state !== "installed" || !info.ready) && (
               <span className="basis-full text-[length:var(--text-meta)] text-ink-muted">
-                {info.message}
+                {state === "not-found" || state === "off-path" ? info.message : info.readyReason}
+                {!info.ready && info.fixHint ? ` ${info.fixHint}` : ""}
               </span>
             )}
           </li>

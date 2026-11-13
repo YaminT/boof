@@ -3,6 +3,7 @@ import type { Project } from "@boof/heart/schema";
 import { TooltipProvider } from "@/ui/tooltip";
 import type { AppData } from "../useAppData.js";
 import type { Route } from "../lib/route.js";
+import type { HarnessesState } from "../useHarnesses.js";
 import { AddProjectModal } from "../components/Projects.js";
 import { CommandConsole, type ConsoleAssistant } from "./CommandConsole.js";
 import { useConcierge } from "./useConcierge.js";
@@ -62,6 +63,7 @@ export function AppShell({
   navigate,
   onSelectProject,
   onProjectAdded,
+  harnesses,
   children,
 }: {
   data: AppData;
@@ -71,6 +73,8 @@ export function AppShell({
   navigate: (to: Route, opts?: { replace?: boolean }) => void;
   onSelectProject: (id: string) => void;
   onProjectAdded: (project: Project) => void;
+  /** The readiness check App already loaded; the topbar and the actions read it from here. */
+  harnesses: HarnessesState;
   children: ReactNode;
 }) {
   const [adding, setAdding] = useState(false);
@@ -83,6 +87,7 @@ export function AppShell({
       ? (data.tasks.find((t) => t.frontmatter.id === route.taskId) ?? null)
       : null;
   const held = useHeldScopes();
+  const agentBlocked = harnesses.status !== null && !harnesses.status.anyReady;
   const concierge = useConcierge(pid, conciergeContextOf(route), () => {
     void Promise.all([data.refresh(), epics.reload()]);
   });
@@ -110,6 +115,7 @@ export function AppShell({
     epics,
     currentTask,
     resetAssistant,
+    agentBlocked,
     mode: "toast",
   });
   const consoleActions = useCommandActions({
@@ -121,6 +127,7 @@ export function AppShell({
     epics,
     currentTask,
     resetAssistant,
+    agentBlocked,
     mode: "throw",
   });
   const counts: NavCounts = {
@@ -176,7 +183,13 @@ export function AppShell({
           }
         />
         <div className="flex min-w-0 flex-1 flex-col px-4 min-[720px]:px-8">
-          <TopBar data={data} projects={projects} selected={selected} needsYou={counts.inbox} />
+          <TopBar
+            data={data}
+            projects={projects}
+            selected={selected}
+            needsYou={counts.inbox}
+            harnesses={harnesses}
+          />
           <main className="mx-auto w-full max-w-[1320px] min-w-0 flex-1 pt-6 pb-8 min-[720px]:pb-12">
             {children}
           </main>

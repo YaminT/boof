@@ -8,7 +8,8 @@ export type Route =
   | { name: "plans"; pid: string; planId?: string; goalId?: string }
   | { name: "wizard"; pid: string }
   | { name: "settings"; pid: string; page: SettingsPageId }
-  | { name: "inbox" };
+  | { name: "inbox" }
+  | { name: "doctor" };
 
 const SETTINGS_PAGES: readonly SettingsPageId[] = [
   "project",
@@ -36,6 +37,7 @@ export function parseRoute(path: string): Route | null {
   if (trimmed.split("/").some((s) => s === "" || s === "." || s === "..")) return null;
   if (segs.some((s) => s === "." || s === "..")) return null;
   if (segs[0] === "inbox") return segs.length === 1 ? { name: "inbox" } : null;
+  if (segs[0] === "doctor") return segs.length === 1 ? { name: "doctor" } : null;
   if (segs.length > 5) return null;
   if (segs[0] !== "p" || !segs[1]) return null;
   const pid = segs[1];
@@ -68,6 +70,7 @@ export function parseRoute(path: string): Route | null {
 /** App-relative (never starts with "/" or "#"); resolved against the pinned document base. */
 export function formatRoute(route: Route): string {
   if (route.name === "inbox") return "inbox";
+  if (route.name === "doctor") return "doctor";
   const e = encodeURIComponent;
   const base = `p/${e(route.pid)}`;
   switch (route.name) {
@@ -95,7 +98,7 @@ export function formatRoute(route: Route): string {
 }
 
 export function routePid(route: Route | null): string | null {
-  return route && route.name !== "inbox" ? route.pid : null;
+  return route && route.name !== "inbox" && route.name !== "doctor" ? route.pid : null;
 }
 
 /** The equivalent screen in project `pid`; ids that belong to the old project are dropped. */
@@ -133,7 +136,8 @@ export function correctedRoute(
 ): Route | null {
   if (!projectIds || !selectedId) return null;
   if (!route) return { name: "overview", pid: selectedId };
-  if (route.name === "inbox" || projectIds.includes(route.pid)) return null;
+  if (route.name === "inbox" || route.name === "doctor" || projectIds.includes(route.pid))
+    return null;
   return routeForProject(route, selectedId);
 }
 
@@ -143,6 +147,8 @@ export function routeKey(route: Route | null): string {
   switch (route.name) {
     case "inbox":
       return "inbox";
+    case "doctor":
+      return "doctor";
     case "overview":
       return `overview:${route.pid}`;
     case "tasks":
@@ -204,7 +210,7 @@ export function nextPrevious(
 
 /** Where a task's "← …" link goes, and what it says, given the route the user came from. */
 export function backFor(previous: Route | null, pid: string): { route: Route; label: string } {
-  if (previous && previous.name !== "inbox" && previous.pid === pid) {
+  if (previous && previous.name !== "inbox" && previous.name !== "doctor" && previous.pid === pid) {
     if (previous.name === "plans")
       return { route: previous, label: previous.planId ? "← Plan" : "← Plans" };
     if (previous.name === "tasks") return { route: previous, label: "← Tasks" };

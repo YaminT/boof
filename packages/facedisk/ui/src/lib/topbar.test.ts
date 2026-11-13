@@ -155,7 +155,7 @@ describe("topbarState", () => {
     );
     expect(paused.text).toBe("Cannot run: all projects paused");
     const none = topbarState(input({ noHarness: true }));
-    expect(none.text).toBe("Cannot run: no harness installed");
+    expect(none.text).toBe("Cannot run: no agent ready");
   });
 
   it("without settings:read it falls back to the project's tasks and has no toggle", () => {
@@ -271,5 +271,22 @@ describe("nextStep", () => {
     expect(nextStep({ ...base, kind: "waiting" })).toBeNull();
     expect(nextStep({ ...base, queued: 2 })).toBeNull();
     expect(nextStep({ ...base, tasks: [{ status: "action" }] })).toBeNull();
+  });
+});
+
+describe("no agent ready", () => {
+  it("shows Cannot run: no agent ready with Start disabled while the runner is on", () => {
+    const s = topbarState(input({ noHarness: true }));
+    expect(s.text).toBe("Cannot run: no agent ready");
+    const on = topbarState(input({ overview: ov({ enabled: true }), noHarness: true }));
+    expect(on.kind).toBe("blocked");
+    expect(on.toggle).toMatchObject({ label: "Start", disabled: true, reason: "no agent ready" });
+  });
+
+  it("disables Start of a paused runner too, and leaves it on otherwise", () => {
+    const paused = topbarState(input({ overview: ov({ enabled: false }), noHarness: true }));
+    expect(paused.toggle).toMatchObject({ label: "Start", disabled: true });
+    const ok = topbarState(input({ overview: ov({ enabled: false }) }));
+    expect(ok.toggle).toMatchObject({ label: "Start", disabled: false });
   });
 });

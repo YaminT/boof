@@ -70,6 +70,8 @@ export interface ActionContext {
   /** The task open on screen, which the hierarchy actions apply to; null elsewhere. */
   currentTask: TaskView | null;
   runnerEnabled: boolean;
+  /** True while no coding agent is ready: actions that start work are disabled. */
+  agentBlocked?: boolean;
   /** The settings' profiles and the active one; absent profiles offer no switch actions. */
   profiles?: OrchestrationProfile[];
   activeProfile?: string | null;
@@ -104,15 +106,28 @@ function openWizard(fx: Pick<ActionEffects, "navigate">, pid: string, title?: st
   fx.navigate({ name: "wizard", pid });
 }
 
+/** Actions that start work: queueing, creating tasks from a plan, drafting a plan, the runner. */
+const STARTS_WORK = /^(queue-|activate-plan-|new-plan$)/;
+
 export function createCommandActions(ctx: ActionContext): CommandAction[] {
   const { pid, effects: fx } = ctx;
   const out: CommandAction[] = [];
-  const add = (a: Omit<CommandAction, "searchValue" | "keywords"> & Partial<CommandAction>) =>
-    out.push({ searchValue: a.label, keywords: [], ...a });
+  const add = (a: Omit<CommandAction, "searchValue" | "keywords"> & Partial<CommandAction>) => {
+    const startsWork =
+      ctx.agentBlocked === true &&
+      (STARTS_WORK.test(a.id) || (a.id === "toggle-runner" && !ctx.runnerEnabled));
+    out.push({
+      searchValue: a.label,
+      keywords: [],
+      ...a,
+      ...(startsWork ? { disabled: true, meta: "no agent ready" } : {}),
+    });
+  };
   const go = (id: string, label: string, to: Route) =>
     add({ id, label, group: "Go to", run: () => fx.navigate(to) });
 
   go("go-inbox", "Go to Inbox", { name: "inbox" });
+  go("go-doctor", "Go to Setup check (Doctor)", { name: "doctor" });
   if (pid) {
     go("go-overview", "Go to Overview", { name: "overview", pid });
     go("go-tasks", "Go to Tasks", { name: "tasks", pid });

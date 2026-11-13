@@ -60,13 +60,34 @@ export interface HarnessInstall {
   /** Set when the program exists but is not on PATH: where it was found. */
   foundOffPath?: string;
   message: string;
+  /** Installed and able to start (claude-agent needs the gateway or an API key). */
+  ready: boolean;
+  readyReason: string;
+  fixHint?: string;
+  fixPage?: DoctorFixPage;
   /** Asked with a project: why a task of that project cannot start with this installed tool. */
   startBlock?: string;
+}
+
+/** The Settings section where a failed check is fixed. */
+export type DoctorFixPage = "agents" | "gateway" | "projects" | "sandbox" | "general";
+
+export interface DoctorCheck {
+  id: "agents" | "gateway" | "projectsRoot" | "git" | "dataRoot" | "sandbox";
+  label: string;
+  status: "pass" | "warn" | "fail";
+  message: string;
+  fixHint?: string;
+  fixPage?: DoctorFixPage;
 }
 
 export interface HarnessStatus {
   tools: Record<string, HarnessInstall>;
   anyInstalled: boolean;
+  /** At least one tool is ready; while false boof refuses to start work. */
+  anyReady: boolean;
+  gateway: { status: "absent" | "unreachable" | "ok" | "degraded" | "unhealthy"; message: string };
+  checks: DoctorCheck[];
   checkedAt: string;
 }
 
@@ -207,7 +228,7 @@ export interface RunnerStatus {
  * The server resolves titles; the browser sends only the screen and ids.
  */
 export interface ConciergeContext {
-  screen: "overview" | "tasks" | "task" | "plans" | "settings" | "inbox";
+  screen: "overview" | "tasks" | "task" | "plans" | "settings" | "inbox" | "doctor";
   taskId?: string;
   planId?: string;
   goalId?: string;

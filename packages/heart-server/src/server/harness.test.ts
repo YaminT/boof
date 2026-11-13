@@ -82,6 +82,7 @@ describe("the generated harness guide", () => {
           "plan_not_draft",
           "draft_in_progress",
           "agent_not_ready",
+          "no_agent_ready",
         ].includes(code)
       )
         continue;

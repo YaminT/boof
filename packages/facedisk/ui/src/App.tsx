@@ -20,10 +20,15 @@ import { SignInStorageError, TokenGate } from "./components/TokenGate.js";
 import { getSignInStorageError, onSignInStorageError } from "./token.js";
 import { AddProjectGate } from "./components/Projects.js";
 import { AppShell } from "./shell/AppShell.js";
+import { useHarnesses } from "./useHarnesses.js";
+import { DoctorPage } from "./doctor/DoctorPage.js";
+import { continueRoute, gateOf, reachableWhileBlocked } from "./lib/doctor.js";
+import { isDesktop } from "./desktop.js";
 import {
   correctedRoute,
   nextPrevious,
   routeForProject,
+  routeKey,
   routePid,
   type Route,
 } from "./lib/route.js";
@@ -56,6 +61,13 @@ const SettingsScreen = lazy(() =>
 
 export function App() {
   const { route, navigate } = useRoute();
+  // The setup check (doctor) is the first page of every app start; the page the app was opened on
+  // is where Continue goes. Readiness itself is never stored: it is asked for again.
+  const harnesses = useHarnesses();
+  const gate = gateOf(harnesses);
+  const entry = useRef<Route | null>(route);
+  const [doctorSeen, setDoctorSeen] = useState(false);
+  const [passed, setPassed] = useState(false);
   // useProjects needs `settings` (from useAppData) and useAppData needs the selected id and the
   // projects reload (from useProjects). Break the cycle with a mirrored id and a stable reload.
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -96,7 +108,11 @@ export function App() {
   // one once the projects have loaded; the replace keeps Back from returning to it.
   const projectIds = useMemo(() => projects?.map((p) => p.id) ?? null, [projects]);
   const routeUnknownProject =
-    !!route && route.name !== "inbox" && !!projects && !projects.some((p) => p.id === route.pid);
+    !!route &&
+    route.name !== "inbox" &&
+    route.name !== "doctor" &&
+    !!projects &&
+    !projects.some((p) => p.id === route.pid);
   useEffect(() => {
     const fix = correctedRoute(route, projectIds, currentId);
     if (fix) navigate(fix, { replace: true });
@@ -107,6 +123,7 @@ export function App() {
   const taskCount = data.tasks.length;
   const plansLoaded = !data.plansError && data.plansLoaded;
   const emptyProject =
+    gate !== "blocked" &&
     !!route &&
     (route.name === "overview" || route.name === "tasks" || route.name === "plans") &&
     !(route.name === "plans" && route.planId) &&
@@ -135,6 +152,32 @@ export function App() {
     void refresh().catch(() => {});
   };
 
+  // First page, and the lock: the doctor shows first on every start, and again whenever no agent
+  // is ready (only Settings stays open, to fix things).
+  const mustLand = !passed && !doctorSeen;
+  const locked = gate === "blocked" && !reachableWhileBlocked(route);
+  const showDoctor = route?.name === "doctor" || mustLand || locked;
+  const routeName = route?.name ?? null;
+  useEffect(() => {
+    if (routeName === "doctor") setDoctorSeen(true);
+  }, [routeName]);
+  useEffect(() => {
+    if (showDoctor && routeName !== "doctor") navigate({ name: "doctor" }, { replace: true });
+  }, [showDoctor, routeName, navigate]);
+  // Coming back from Settings after a fix: ask again instead of trusting the last answer.
+  const key = routeKey(route);
+  const refreshHarnesses = harnesses.refresh;
+  const wasKey = useRef(key);
+  useEffect(() => {
+    if (wasKey.current !== key && gate === "blocked") refreshHarnesses();
+    wasKey.current = key;
+  }, [key, gate, refreshHarnesses]);
+  const goOn = () => {
+    setPassed(true);
+    const to = continueRoute(entry.current, selected?.id ?? null, projectIds);
+    navigate(to ?? { name: "inbox" }, { replace: true });
+  };
+
   // Sign-in cannot work while the server refuses to store sessions: show why instead of the gate.
   if (storageError) return <SignInStorageError message={storageError} />;
 
@@ -150,8 +193,19 @@ export function App() {
     );
   }
 
-  // First-run gate: block the app until the first project is added.
-  if (settings && projects && projects.length === 0) {
+  if (showDoctor) {
+    return (
+      <DoctorPage
+        harnesses={harnesses}
+        pid={selected?.id ?? null}
+        isDesktop={isDesktop}
+        onContinue={goOn}
+      />
+    );
+  }
+
+  // First-run gate: block the app until the first project is added (Settings stays reachable).
+  if (settings && projects && projects.length === 0 && route?.name !== "settings") {
     return (
       <AddProjectGate projectsRoot={settings.projectsRoot} onAdded={(p) => void addProject(p)} />
     );
@@ -170,6 +224,7 @@ export function App() {
       navigate={navigate}
       onSelectProject={openProject}
       onProjectAdded={(p) => void addProject(p)}
+      harnesses={harnesses}
     >
       <Suspense fallback={null}>
         {budget && <BudgetBanner budget={budget} />}
@@ -236,7 +291,7 @@ export function App() {
               reloadProjects={reload}
             />
           )}
-        {route?.name === "settings" && projectsDenied && !selected && (
+        {route?.name === "settings" && (projectsDenied || projects?.length === 0) && !selected && (
           <SettingsScreen
             key={route.pid}
             pid={route.pid}

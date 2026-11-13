@@ -129,6 +129,7 @@
                   "plan_not_draft",
                   "tool_not_installed",
                   "agent_not_ready",
+                  "no_agent_ready",
                   "draft_in_progress",
                   "goal_has_dependents",
                   "profile_in_use",
@@ -4425,15 +4426,110 @@
                     "anyInstalled": {
                       "type": "boolean"
                     },
+                    "anyReady": {
+                      "description": "True when at least one tool is ready. While false, boof refuses to start work.",
+                      "type": "boolean"
+                    },
                     "checkedAt": {
                       "description": "ISO-8601 time of the oldest check in the answer.",
                       "type": "string"
+                    },
+                    "checks": {
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "fixHint": {
+                            "type": "string"
+                          },
+                          "fixPage": {
+                            "description": "The Settings section where this is fixed.",
+                            "enum": [
+                              "agents",
+                              "gateway",
+                              "projects",
+                              "sandbox",
+                              "general"
+                            ],
+                            "type": "string"
+                          },
+                          "id": {
+                            "enum": [
+                              "agents",
+                              "gateway",
+                              "projectsRoot",
+                              "git",
+                              "dataRoot",
+                              "sandbox"
+                            ],
+                            "type": "string"
+                          },
+                          "label": {
+                            "type": "string"
+                          },
+                          "message": {
+                            "type": "string"
+                          },
+                          "status": {
+                            "enum": [
+                              "pass",
+                              "warn",
+                              "fail"
+                            ],
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "label",
+                          "status",
+                          "message"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    },
+                    "gateway": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "message": {
+                          "type": "string"
+                        },
+                        "status": {
+                          "enum": [
+                            "absent",
+                            "unreachable",
+                            "ok",
+                            "degraded",
+                            "unhealthy"
+                          ],
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "status",
+                        "message"
+                      ],
+                      "type": "object"
                     },
                     "tools": {
                       "additionalProperties": {
                         "additionalProperties": false,
                         "properties": {
                           "displayName": {
+                            "type": "string"
+                          },
+                          "fixHint": {
+                            "description": "What to do when it is not ready.",
+                            "type": "string"
+                          },
+                          "fixPage": {
+                            "enum": [
+                              "agents",
+                              "gateway",
+                              "projects",
+                              "sandbox",
+                              "general"
+                            ],
                             "type": "string"
                           },
                           "foundOffPath": {
@@ -4449,6 +4545,14 @@
                           "path": {
                             "type": "string"
                           },
+                          "ready": {
+                            "description": "True when the tool is installed and able to start (claude-agent needs the better-ccflare gateway or an Anthropic API key). Never sends a prompt.",
+                            "type": "boolean"
+                          },
+                          "readyReason": {
+                            "description": "Why the tool is or is not ready.",
+                            "type": "string"
+                          },
                           "startBlock": {
                             "description": "Only with forProject: why a task of that project cannot start with this installed tool (for example claude-agent without an API key).",
                             "type": "string"
@@ -4460,6 +4564,8 @@
                         "required": [
                           "displayName",
                           "installed",
+                          "ready",
+                          "readyReason",
                           "message"
                         ],
                         "type": "object"
@@ -4473,6 +4579,9 @@
                   "required": [
                     "tools",
                     "anyInstalled",
+                    "anyReady",
+                    "gateway",
+                    "checks",
                     "checkedAt"
                   ],
                   "type": "object"
@@ -16662,6 +16771,10 @@
     },
     "n8n_not_configured": {
       "description": "No n8n instance is configured (settings.n8n is not set).",
+      "status": 409
+    },
+    "no_agent_ready": {
+      "description": "No coding agent is ready to run tasks (none installed, or claude-agent has no gateway or API key).",
       "status": 409
     },
     "no_default_project": {

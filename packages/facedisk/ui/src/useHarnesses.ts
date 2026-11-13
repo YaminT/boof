@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { api } from "./api.js";
+import { api, ApiError } from "./api.js";
 import type { HarnessStatus } from "./api-types.js";
 
 export interface HarnessesState {
@@ -7,6 +7,8 @@ export interface HarnessesState {
   status: HarnessStatus | null;
   loading: boolean;
   failed: boolean;
+  /** The key lacks settings:read: the answer cannot be read at all. */
+  denied: boolean;
   /** Check again (the server caches an answer for a few minutes; this asks for a fresh one). */
   refresh: () => void;
 }
@@ -16,20 +18,26 @@ export function useHarnesses(projectId?: string): HarnessesState {
   const [status, setStatus] = useState<HarnessStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [failed, setFailed] = useState(false);
+  const [denied, setDenied] = useState(false);
   const [attempt, setAttempt] = useState(0);
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
     setFailed(false);
+    setDenied(false);
     api
       .harnesses(attempt > 0, projectId)
       .then((s) => !cancelled && setStatus(s))
-      .catch(() => !cancelled && setFailed(true))
+      .catch((err) => {
+        if (cancelled) return;
+        setFailed(true);
+        setDenied(err instanceof ApiError && err.status === 403);
+      })
       .finally(() => !cancelled && setLoading(false));
     return () => {
       cancelled = true;
     };
   }, [attempt, projectId]);
   const refresh = useCallback(() => setAttempt((n) => n + 1), []);
-  return { status, loading, failed, refresh };
+  return { status, loading, failed, denied, refresh };
 }

@@ -130,9 +130,15 @@ describe("list edits", () => {
 describe("agents", () => {
   const status = (tools: Record<string, boolean>) => ({
     tools: Object.fromEntries(
-      Object.entries(tools).map(([k, v]) => [k, { displayName: k, installed: v, message: "" }]),
+      Object.entries(tools).map(([k, v]) => [
+        k,
+        { displayName: k, installed: v, message: "", ready: v, readyReason: "" },
+      ]),
     ),
     anyInstalled: Object.values(tools).some(Boolean),
+    anyReady: Object.values(tools).some(Boolean),
+    gateway: { status: "ok" as const, message: "" },
+    checks: [],
     checkedAt: "",
   });
   it("lists installed tools and explains when none is", () => {
@@ -168,12 +174,23 @@ describe("agents that cannot start", () => {
         displayName: "Claude Agent",
         installed: true,
         message: "",
+        ready: true,
+        readyReason: "",
         startBlock: "claude-agent cannot start: no gateway",
       },
-      "claude-code": { displayName: "Claude Code", installed: true, message: "" },
-      codex: { displayName: "Codex", installed: false, message: "" },
+      "claude-code": {
+        displayName: "Claude Code",
+        installed: true,
+        message: "",
+        ready: true,
+        readyReason: "",
+      },
+      codex: { displayName: "Codex", installed: false, message: "", ready: false, readyReason: "" },
     },
     anyInstalled: true,
+    anyReady: true,
+    gateway: { status: "ok" as const, message: "" },
+    checks: [],
     checkedAt: "",
   };
   it("separates installed tools that cannot start and never preselects them", () => {

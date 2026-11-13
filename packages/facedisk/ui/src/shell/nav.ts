@@ -4,7 +4,7 @@ export type NavKey = "overview" | "tasks" | "plans" | "settings" | "inbox";
 
 /** Which nav item a route belongs to (a task editor sits under Tasks). */
 export function navKey(route: Route | null): NavKey | null {
-  if (!route) return null;
+  if (!route || route.name === "doctor") return null;
   if (route.name === "task") return "tasks";
   return route.name === "wizard" ? "plans" : route.name;
 }

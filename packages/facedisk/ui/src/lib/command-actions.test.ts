@@ -53,6 +53,7 @@ describe("createCommandActions", () => {
   it("gives every action a stable id", () => {
     expect(ids(ctx())).toEqual([
       "go-inbox",
+      "go-doctor",
       "go-overview",
       "go-tasks",
       "go-plans",
@@ -86,6 +87,7 @@ describe("createCommandActions", () => {
     const none = ids(ctx({ pid: null, tasks: [], plans: [] }));
     expect(none).toEqual([
       "go-inbox",
+      "go-doctor",
       "switch-project-alpha",
       "switch-project-beta",
       "toggle-runner",
@@ -282,5 +284,30 @@ describe("profile actions", () => {
 
   it("offers none without profiles", () => {
     expect(ids(ctx()).some((id) => id.startsWith("use-profile-"))).toBe(false);
+  });
+});
+
+describe("with no agent ready", () => {
+  const blocked = (over: Partial<ActionContext> = {}) =>
+    createCommandActions(ctx({ agentBlocked: true, ...over }));
+  const byId = (list: ReturnType<typeof blocked>, id: string) => list.find((a) => a.id === id)!;
+
+  it("disables the actions that start work and says why", () => {
+    const list = blocked({ plans: [plan("p1")] });
+    for (const id of ["queue-t1", "activate-plan-p1", "new-plan", "toggle-runner"]) {
+      expect(byId(list, id)).toMatchObject({ disabled: true, meta: "no agent ready" });
+    }
+  });
+
+  it("keeps navigation, Pause and the other actions", () => {
+    const list = blocked({ runnerEnabled: true });
+    expect(byId(list, "go-settings-agents").disabled).toBeUndefined();
+    expect(byId(list, "go-doctor").disabled).toBeUndefined();
+    expect(byId(list, "new-task").disabled).toBeUndefined();
+    expect(byId(list, "toggle-runner").disabled).toBe(false);
+  });
+
+  it("changes nothing when an agent is ready", () => {
+    expect(byId(createCommandActions(ctx()), "queue-t1").disabled).toBeUndefined();
   });
 });

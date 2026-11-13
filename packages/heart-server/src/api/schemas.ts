@@ -296,9 +296,29 @@ export const HealthResultSchema = z.object({
 });
 
 /** One tool's install check, as `harnesses.status` reports it. */
+const FixPageSchema = z.enum(["agents", "gateway", "projects", "sandbox", "general"]);
+
+export const DoctorCheckSchema = z.object({
+  id: z.enum(["agents", "gateway", "projectsRoot", "git", "dataRoot", "sandbox"]),
+  label: z.string(),
+  status: z.enum(["pass", "warn", "fail"]),
+  message: z.string(),
+  fixHint: z.string().optional(),
+  fixPage: FixPageSchema.optional().meta({
+    description: "The Settings section where this is fixed.",
+  }),
+});
+
 export const HarnessInstallSchema = z.object({
   displayName: z.string(),
   installed: z.boolean(),
+  ready: z.boolean().meta({
+    description:
+      "True when the tool is installed and able to start (claude-agent needs the better-ccflare gateway or an Anthropic API key). Never sends a prompt.",
+  }),
+  readyReason: z.string().meta({ description: "Why the tool is or is not ready." }),
+  fixHint: z.string().optional().meta({ description: "What to do when it is not ready." }),
+  fixPage: FixPageSchema.optional(),
   version: z.string().optional(),
   path: z.string().optional(),
   foundOffPath: z
@@ -315,6 +335,14 @@ export const HarnessInstallSchema = z.object({
 export const HarnessStatusSchema = z.object({
   tools: z.record(z.string(), HarnessInstallSchema),
   anyInstalled: z.boolean(),
+  anyReady: z.boolean().meta({
+    description: "True when at least one tool is ready. While false, boof refuses to start work.",
+  }),
+  gateway: z.object({
+    status: z.enum(["absent", "unreachable", "ok", "degraded", "unhealthy"]),
+    message: z.string(),
+  }),
+  checks: z.array(DoctorCheckSchema),
   checkedAt: z.string().meta({ description: "ISO-8601 time of the oldest check in the answer." }),
 });
 
