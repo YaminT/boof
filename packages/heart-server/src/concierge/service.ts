@@ -541,28 +541,53 @@ export class ConciergeService {
       let stopReason: ConciergeAnswer["stopReason"] = "done";
       let sessionId = conversation.sessionId;
       let failure: ConciergeTurnError | null = null;
+      let resumeId = conversation.sessionId ?? undefined;
+      let resumeBase = conversation.baseline ?? undefined;
+      let restartNote = "";
+      const turnAgent = this.opts.agent;
       try {
-        const result = await this.opts.agent.turn({
-          project,
-          systemPrompt: CONCIERGE_SYSTEM_PROMPT,
-          prompt,
-          model: cfg.model,
-          resumeSessionId: conversation.sessionId ?? undefined,
-          resumeBaseline: conversation.baseline ?? undefined,
-          maxTurns: cfg.maxTurns,
-          maxBudgetUsd,
-          timeoutMs: cfg.timeoutMs,
-          mcpServer,
-          mcpServerName: "boof",
-          ...(bridged ? { bridge: bridged.bridge } : {}),
-          allowedTools,
-          onEvent: (event) => {
-            if (event.type === "text") answerText += event.text;
-            onEvent?.(event);
-          },
-          signal,
-        });
-        answerText = result.text;
+        const runTurn = () =>
+          turnAgent.turn({
+            project,
+            systemPrompt: CONCIERGE_SYSTEM_PROMPT,
+            prompt,
+            model: cfg.model,
+            resumeSessionId: resumeId,
+            resumeBaseline: resumeBase,
+            maxTurns: cfg.maxTurns,
+            maxBudgetUsd,
+            timeoutMs: cfg.timeoutMs,
+            mcpServer,
+            mcpServerName: "boof",
+            ...(bridged ? { bridge: bridged.bridge } : {}),
+            allowedTools,
+            onEvent: (event) => {
+              if (event.type === "text") answerText += event.text;
+              onEvent?.(event);
+            },
+            signal,
+          });
+        let result;
+        try {
+          result = await runTurn();
+        } catch (err) {
+          // A stored session id the tool cannot resume (another tool made it, or its transcript is
+          // gone): start a fresh session once and say so, instead of failing until a reset.
+          if (
+            resumeId !== undefined &&
+            err instanceof ConciergeTurnError &&
+            /no conversation found/i.test(err.message)
+          ) {
+            resumeId = undefined;
+            resumeBase = undefined;
+            sessionId = null;
+            restartNote =
+              "Note: the previous assistant session could not be resumed, so a new session was started. Earlier messages are not remembered.\n\n";
+            answerText = "";
+            result = await runTurn();
+          } else throw err;
+        }
+        answerText = restartNote + result.text;
         usage = result.usage;
         cumulative = result.cumulative;
         sessionId = result.sessionId;
