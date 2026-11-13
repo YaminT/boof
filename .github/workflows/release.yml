@@ -134,6 +134,10 @@ jobs:
             npm exec --workspace @boof/desktop -- electron-builder --win --publish never
           fi
 
+      - name: Verify macOS ad-hoc signature
+        if: matrix.name == 'macOS'
+        run: bash scripts/verify-mac-codesign.sh packages/desktop/build/release
+
       - name: Ensure release exists
         if: github.event.inputs.dry_run != 'true'
         env:
