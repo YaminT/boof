@@ -552,7 +552,16 @@ async function syncOnce(
       taken,
     );
     taken.add(id);
-    const chosen = await chooseBase(g, id, ownBase);
+    // A waiting task has no dependency branches to start from yet; it gets its base when it is
+    // released (see the unskip step of the sync).
+    const chosen =
+      skip && !ownBase
+        ? {
+            base: undefined,
+            mergeFirst: [] as string[],
+            log: "Base: decided when the goals this goal depends on are done (the task waits for them).",
+          }
+        : await chooseBase(g, id, ownBase);
     const base = chosen.base;
     const basePrompt = followUp
       ? buildFollowUpPrompt(g, plan.id, repoRoot, g.synced, doneRev)
@@ -751,6 +760,18 @@ async function syncOnce(
           const fresh = (await store.get(current.frontmatter.id)) ?? current;
           fresh.frontmatter.skip = false;
           removeLabel(fresh, BLOCKED_LABEL);
+          // The task was created while its dependencies were unfinished, so it has no base yet:
+          // start it from the dependencies' branches now that they are done.
+          if (!fresh.frontmatter.base && fresh.frontmatter.runs <= 1) {
+            const chosen = await chooseBase(g, fresh.frontmatter.id, undefined);
+            if (chosen.base) fresh.frontmatter.base = chosen.base;
+            const basePrompt = fresh.body.prompt.replace(/\n\n## Dependencies\n[\s\S]*$/, "");
+            fresh.body.prompt =
+              chosen.mergeFirst.length > 0
+                ? `${basePrompt}\n\n${dependenciesSection(chosen.base, chosen.mergeFirst)}`
+                : basePrompt;
+            fresh.body.log = `## Base\n${chosen.log}`;
+          }
           await store.save(fresh);
         }
         result.updated.push({

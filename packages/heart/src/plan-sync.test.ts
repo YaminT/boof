@@ -545,6 +545,28 @@ describe("syncPlan: follow-up base and goal.tasks", () => {
     expect(follow.frontmatter.base).toBe("boof-runner/boof-a");
   });
 
+  it("a waiting task gets its base from the dependency branch when it is released", async () => {
+    await initRepo();
+    project = await new ProjectStore(dataRoot).update("proj", { defaultBase: "main" });
+    await makePlan([testGoal("a", 1), testGoal("b", 2, ["a"])]);
+    await sync({ includeBlocked: true });
+    const waiting = (await tasks.get("boof-b"))!;
+    expect(waiting.frontmatter.skip).toBe(true);
+    expect(waiting.frontmatter.base).toBeUndefined();
+    expect(waiting.body.log).toContain("decided when the goals");
+
+    await git(["checkout", "-q", "-b", "boof-runner/boof-a", "main"]);
+    await git(["commit", "--allow-empty", "-m", "work of a"]);
+    await git(["checkout", "-q", "main"]);
+    await finishTask("boof-a");
+    await sync({ includeBlocked: true });
+
+    const released = (await tasks.get("boof-b"))!;
+    expect(released.frontmatter.skip).toBe(false);
+    expect(released.frontmatter.base).toBe("boof-runner/boof-a");
+    expect(released.body.log).toContain("boof-runner/boof-a");
+  });
+
   it("falls back to the project default base when the previous branch is gone", async () => {
     await initRepo();
     project = await new ProjectStore(dataRoot).update("proj", { defaultBase: "main" });
