@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { mergeOrderOf, PlanSchema } from "@boof/heart";
+import { authorize, mergeOrderOf, PlanSchema } from "@boof/heart";
 import { defineOp } from "../define-op.js";
 import { OpError } from "../errors.js";
 import {
@@ -155,7 +155,7 @@ export const plansDraftGoals = defineOp({
   name: "plans.draftGoals",
   title: "Have an agent draft the goals of a plan",
   description:
-    "Queues a plan-draft task: the chosen tool reads the repository and writes the goals of a draft plan, which replace the plan's goals when the task finishes (only if the plan is still the same draft). Inputs: projectId, planId, tool, model, optional note. Refused with 409 draft_in_progress while another draft task of the plan is pending, running or waiting for answers, 400 tool_not_installed for a tool that is not installed, 409 plan_not_draft for a plan that is not a draft. Review-trust clients are refused.",
+    "Queues a plan-draft task: the chosen tool reads the repository and writes the goals of a draft plan, which replace the plan's goals when the task finishes (only if the plan is still the same draft). Inputs: projectId, planId, tool, model, optional note. Refused with 409 draft_in_progress while another draft task of the plan is pending, running or waiting for answers, 400 tool_not_installed for a tool that is not installed, 409 plan_not_draft for a plan that is not a draft. Needs tasks:write and plans:write. Review-trust clients are refused.",
   scope: "tasks:write",
   projectScoped: true,
   input: z.strictObject({
@@ -175,8 +175,17 @@ export const plansDraftGoals = defineOp({
   },
   summary: (r) => `Queued task ${r.task.id} to draft the goals of plan ${r.plan.id}`,
   ...base,
-  handler: async (ctx, { projectId, planId, ...input }) =>
-    (await requireProject(ctx, projectId)).plans.draftGoals(planId, input, ctx.principal),
+  handler: async (ctx, { projectId, planId, ...input }) => {
+    // The finished task replaces the plan's goals, so queueing it needs plans:write as well.
+    if (!authorize(ctx.principal, "plans:write"))
+      throw new OpError(
+        403,
+        "Missing required scope: plans:write (a draft replaces the plan's goals)",
+        "forbidden_scope",
+        { scope: "plans:write" },
+      );
+    return (await requireProject(ctx, projectId)).plans.draftGoals(planId, input, ctx.principal);
+  },
 });
 
 export const plansUpsertGoal = defineOp({

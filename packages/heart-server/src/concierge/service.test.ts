@@ -9,6 +9,7 @@ import {
   SettingsStore,
   TaskStore,
   ConciergeStore,
+  ConciergeTurnError,
   defaultSettings,
   execCommand,
   readDailyLedger,
@@ -527,6 +528,37 @@ describe("ConciergeService", () => {
     });
     expect(agent.inputs[0]?.resumeSessionId).toBe("session-1");
     expect(agent.inputs[0]?.resumeBaseline?.costUsd).toBe(0.01);
+  });
+
+  it("starts a fresh session when the stored one cannot be resumed, and says so", async () => {
+    const first = await ask("first");
+    const calls: Array<string | undefined> = [];
+    const real = scriptedAgent([{ text: "recovered" }], { sessionId: "session-fresh" });
+    agent = {
+      ...real,
+      turn: async (input: Parameters<typeof real.turn>[0]) => {
+        calls.push(input.resumeSessionId);
+        if (input.resumeSessionId)
+          throw new ConciergeTurnError(
+            "No conversation found with session ID: x",
+            "failed",
+            null,
+            null,
+          );
+        return real.turn(input);
+      },
+    } as typeof agent;
+    concierge = buildConcierge();
+    const second = await concierge.ask(LOCAL_PRINCIPAL, "demo", {
+      text: "again",
+      conversationId: first.conversationId,
+    });
+    expect(calls).toEqual(["session-1", undefined]);
+    expect(second.text).toContain("could not be resumed");
+    expect(second.text).toContain("recovered");
+    expect((await new ConciergeStore(root).get("demo", second.conversationId))?.sessionId).toBe(
+      "session-fresh",
+    );
   });
 
   it("advances the resume baseline after a failed turn reports cost", async () => {

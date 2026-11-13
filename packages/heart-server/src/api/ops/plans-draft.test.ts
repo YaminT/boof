@@ -153,6 +153,23 @@ describe("plans.draftGoals", () => {
     });
   });
 
+  it("refuses a tasks:write key without plans:write", async () => {
+    const writer = {
+      kind: "client",
+      id: "bot",
+      trust: "full",
+      scopes: new Set(["tasks:write", "plans:read", "projects:read"]),
+      projects: "*",
+      clientKind: "harness",
+    } as unknown as Principal;
+    const { call, work } = await setup(writer);
+    await expect(call("plans.draftGoals", draft)).rejects.toMatchObject({
+      status: 403,
+      code: "forbidden_scope",
+    });
+    void work;
+  });
+
   it("refuses a review-trust client (403 forbidden_trust)", async () => {
     const reviewer = {
       kind: "client",

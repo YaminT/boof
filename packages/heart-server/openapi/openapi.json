@@ -10091,7 +10091,7 @@
     },
     "/projects/{projectId}/plans/{planId}/draft": {
       "post": {
-        "description": "Queues a plan-draft task: the chosen tool reads the repository and writes the goals of a draft plan, which replace the plan's goals when the task finishes (only if the plan is still the same draft). Inputs: projectId, planId, tool, model, optional note. Refused with 409 draft_in_progress while another draft task of the plan is pending, running or waiting for answers, 400 tool_not_installed for a tool that is not installed, 409 plan_not_draft for a plan that is not a draft. Review-trust clients are refused.",
+        "description": "Queues a plan-draft task: the chosen tool reads the repository and writes the goals of a draft plan, which replace the plan's goals when the task finishes (only if the plan is still the same draft). Inputs: projectId, planId, tool, model, optional note. Refused with 409 draft_in_progress while another draft task of the plan is pending, running or waiting for answers, 400 tool_not_installed for a tool that is not installed, 409 plan_not_draft for a plan that is not a draft. Needs tasks:write and plans:write. Review-trust clients are refused.",
         "operationId": "plans.draftGoals",
         "parameters": [
           {
