@@ -474,10 +474,12 @@ export function execCommand(
       });
     });
 
-    // The helper is the group leader. When it exits, everything it left behind is a survivor that
-    // still holds stdout and stderr: `close` would never fire. This is the case where the helper
+    // The helper is the group leader. When it exits, survivors in its group still hold
+    // stdout and stderr: `close` would never fire. This is the case where the helper
     // was killed mid-walk (the 10s SIGKILL backstop) and its teardown did not finish. After a
-    // normal exit the group is already empty and the kill finds nothing. Linux only: macOS has its
+    // normal exit the group is already empty and the kill finds nothing. The kill reaches only the
+    // group: survivors that called setsid escape it and keep running. The complete fix is a
+    // per-sandbox cgroup (pids.max + cgroup.kill). Linux only: macOS has its
     // own tree kill, and Windows has no groups.
     if (launch.kind === "sandbox" && platform === "linux" && child.pid) {
       const helperPid = child.pid;

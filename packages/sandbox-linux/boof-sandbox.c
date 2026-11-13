@@ -838,10 +838,13 @@ static void kill_and_reap_descendants(void) {
 #define SANDBOX_NPROC_HEADROOM 8192UL
 #define SANDBOX_NPROC_OVERRIDE_MAX 1000000UL
 
-/* Sum of Threads: in /proc/<pid>/status for processes whose real uid is the caller's. 0 on failure. */
-static unsigned long caller_task_count(void) {
+/*
+ * One scan of /proc. A process that exits mid-scan (ESRCH/ENOENT on its status) is skipped,
+ * unless it is the helper's own pid. 0 on failure.
+ */
+static unsigned long caller_task_count_once(void) {
 #ifdef BOOF_SANDBOX_TEST
-  if (sandbox_fault("proc-tasks")) return 0;
+  static int race_injected = 0;
 #endif
   DIR *dir = opendir("/proc");
   if (dir == NULL) return 0;
@@ -886,12 +889,21 @@ static unsigned long caller_task_count(void) {
       }
     }
     int bad = ferror(file);
+    int read_errno = errno;
     fclose(file);
+    int is_self = strcmp(name, self_name) == 0;
+#ifdef BOOF_SANDBOX_TEST
+    if (!is_self && !race_injected && sandbox_fault("proc-race")) {
+      race_injected = 1;
+      bad = 1;
+      read_errno = ESRCH;
+    }
+#endif
     if (bad) {
+      if (!is_self && (read_errno == ESRCH || read_errno == ENOENT)) continue;
       failed = 1;
       break;
     }
-    int is_self = strcmp(name, self_name) == 0;
     if (match) {
       if (!saw_threads || threads == 0) {
         failed = 1;
@@ -909,6 +921,16 @@ static unsigned long caller_task_count(void) {
   return total;
 }
 
+/* Sum of Threads: for the caller's uid. The scan is retried once if it was inconsistent. */
+static unsigned long caller_task_count(void) {
+#ifdef BOOF_SANDBOX_TEST
+  if (sandbox_fault("proc-tasks")) return 0;
+#endif
+  unsigned long total = caller_task_count_once();
+  if (total == 0) total = caller_task_count_once();
+  return total;
+}
+
 static unsigned long nproc_knob(const char *name, unsigned long fallback) {
   const char *text = getenv(name);
   if (text == NULL || text[0] == '\0') return fallback;
@@ -923,8 +945,8 @@ static unsigned long nproc_knob(const char *name, unsigned long fallback) {
 
 /*
  * Applied in the sandboxed child before exec. The nproc cap bounds a fork storm. nice 19 lets
- * the supervisor win the CPU when it has to stop and kill one. RLIMIT_NICE hard 0 then stops
- * the command raising its priority again on a host that granted a higher ceiling.
+ * the supervisor win the CPU when it has to stop and kill one. RLIMIT_NICE and RLIMIT_RTPRIO
+ * hard 0 then stop the command raising its priority or going real-time on a host that granted it.
  */
 static void apply_resource_limits(void) {
   unsigned long tasks = caller_task_count();
@@ -952,6 +974,9 @@ static void apply_resource_limits(void) {
   nice_lim.rlim_cur = 0;
   nice_lim.rlim_max = 0;
   if (setrlimit(RLIMIT_NICE, &nice_lim) != 0) failf("setrlimit nice: %s", strerror(errno));
+  /* No real-time scheduling either: a SCHED_FIFO command would starve the nice 19 supervisor. */
+  struct rlimit rt_lim = {0, 0};
+  if (setrlimit(RLIMIT_RTPRIO, &rt_lim) != 0) failf("setrlimit rtprio: %s", strerror(errno));
 }
 
 /* CONFIG_PROC_CHILDREN is required. ENOENT here used to look like "no children". */
