@@ -402,8 +402,13 @@ export const api = {
       (r) => r.tools,
     ),
   /** Which coding agents are installed here (free: no prompt). `refresh` re-checks. */
-  harnesses: (refresh = false) =>
-    http<HarnessStatus>(`${V1}/harnesses${refresh ? "?refresh=true" : ""}`),
+  harnesses: (refresh = false, projectId?: string) => {
+    const q = new URLSearchParams();
+    if (refresh) q.set("refresh", "true");
+    if (projectId) q.set("forProject", projectId);
+    const qs = q.toString();
+    return http<HarnessStatus>(`${V1}/harnesses${qs ? `?${qs}` : ""}`);
+  },
   /** Asks the tools for their models (POST). GET /models only reads the last lists. */
   models: () =>
     http<{ models: Record<string, string[]> }>(`${V1}/models/refresh`, { method: "POST" }).then(
