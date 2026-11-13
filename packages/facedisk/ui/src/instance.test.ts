@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { instanceProof } from "@boof/heart/instance-proof";
 import { api } from "./api.js";
+import { resetInstanceProof } from "./instance.js";
+import { invalidateCache } from "./lib/request-cache.js";
 import { connectEventStream } from "./sse.js";
 import { clearToken, getBoundInstance, getToken, setToken } from "./token.js";
 
@@ -32,6 +34,8 @@ function streamOf(chunks: string[], { hang = false } = {}): ReadableStream<Uint8
 
 beforeEach(() => {
   clearToken();
+  resetInstanceProof();
+  invalidateCache();
   vi.stubGlobal("sessionStorage", new MemoryStorage());
 });
 afterEach(() => {
@@ -225,6 +229,91 @@ describe("event stream reconnect", () => {
       true,
     );
     expect(eventCalls.slice(1).every((c) => c.authorization === undefined)).toBe(true);
+    expect(getToken()).toBeUndefined();
+  });
+});
+
+describe("instance proof cache", () => {
+  const healthzFetch = (calls: string[], ok = true) =>
+    vi.fn(async (url: string) => {
+      calls.push(String(url));
+      if (!String(url).startsWith("healthz")) {
+        return new Response(JSON.stringify({ items: [], nextCursor: null }), {
+          status: 200,
+          headers: { "X-Boof-Instance": INSTANCE },
+        });
+      }
+      if (!ok) return new Response("down", { status: 503 });
+      const nonce = new URL(String(url), "http://ui.local").searchParams.get("nonce")!;
+      return new Response(
+        JSON.stringify({ ok: true, instanceProof: await instanceProof(INSTANCE, nonce) }),
+      );
+    });
+  const probes = (calls: string[]) => calls.filter((c) => c.startsWith("healthz")).length;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    sessionStorage.setItem("boofToken", "boof_saved_key");
+    sessionStorage.setItem("boofInstance", INSTANCE);
+  });
+  afterEach(() => vi.useRealTimers());
+
+  it("probes once for concurrent requests and again only after 60 s", async () => {
+    const calls: string[] = [];
+    vi.stubGlobal("fetch", healthzFetch(calls));
+    await Promise.all([api.whoami(), api.listTasks("a"), api.listTasks("b")]);
+    expect(probes(calls)).toBe(1);
+    await api.listTasks("c");
+    expect(probes(calls)).toBe(1);
+    await vi.advanceTimersByTimeAsync(61_000);
+    await api.listTasks("d");
+    expect(probes(calls)).toBe(2);
+  });
+
+  it("withholds without probing again until the backoff (2 s, 5 s, 15 s, 30 s) has passed", async () => {
+    const calls: string[] = [];
+    vi.stubGlobal("fetch", healthzFetch(calls, false));
+    const attempt = () => api.listTasks("a").catch(() => "refused");
+    expect(await attempt()).toBe("refused");
+    expect(await attempt()).toBe("refused");
+    expect(probes(calls)).toBe(1);
+    await vi.advanceTimersByTimeAsync(2_000);
+    await attempt();
+    expect(probes(calls)).toBe(2);
+    await vi.advanceTimersByTimeAsync(4_000);
+    await attempt();
+    expect(probes(calls)).toBe(2);
+    await vi.advanceTimersByTimeAsync(1_000);
+    await attempt();
+    expect(probes(calls)).toBe(3);
+    // 15 s, then 30 s.
+    await vi.advanceTimersByTimeAsync(15_000);
+    await attempt();
+    expect(probes(calls)).toBe(4);
+    await vi.advanceTimersByTimeAsync(29_000);
+    await attempt();
+    expect(probes(calls)).toBe(4);
+    await vi.advanceTimersByTimeAsync(1_000);
+    await attempt();
+    expect(probes(calls)).toBe(5);
+  });
+
+  it("drops the key at once when a response names a different instance", async () => {
+    const calls: string[] = [];
+    vi.stubGlobal("fetch", healthzFetch(calls));
+    await api.listTasks("a");
+    expect(getToken()).toBe("boof_saved_key");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify({ items: [], nextCursor: null }), {
+            status: 200,
+            headers: { "X-Boof-Instance": "cd".repeat(32) },
+          }),
+      ),
+    );
+    await api.listTasks("b"); // proof still fresh: key sent, header differs
     expect(getToken()).toBeUndefined();
   });
 });
