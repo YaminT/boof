@@ -603,13 +603,19 @@ static void op_limits(void) {
     printf("limits %s\n", errname(errno));
     return;
   }
+  struct rlimit rt_lim;
+  if (getrlimit(RLIMIT_RTPRIO, &rt_lim) != 0) {
+    printf("limits %s\n", errname(errno));
+    return;
+  }
   errno = 0;
   int nice_value = getpriority(PRIO_PROCESS, 0);
   const char *floor = getenv("BOOF_SANDBOX_NPROC_FLOOR");
   const char *headroom = getenv("BOOF_SANDBOX_NPROC_HEADROOM");
-  printf("limits nproc=%lu/%lu nice=%d nice_rlim=%lu/%lu host=%ld floor=%s headroom=%s\n",
+  printf("limits nproc=%lu/%lu nice=%d nice_rlim=%lu/%lu rtprio_rlim=%lu/%lu host=%ld floor=%s headroom=%s\n",
          (unsigned long)nproc.rlim_cur, (unsigned long)nproc.rlim_max, nice_value,
-         (unsigned long)nice_lim.rlim_cur, (unsigned long)nice_lim.rlim_max, host_tasks(),
+         (unsigned long)nice_lim.rlim_cur, (unsigned long)nice_lim.rlim_max,
+         (unsigned long)rt_lim.rlim_cur, (unsigned long)rt_lim.rlim_max, host_tasks(),
          floor != NULL ? floor : "unset", headroom != NULL ? headroom : "unset");
 }
 

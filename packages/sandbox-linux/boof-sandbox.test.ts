@@ -683,7 +683,7 @@ describe.skipIf(process.platform !== "linux" || hostAbi < 6)("boof-sandbox", () 
     delete clean.BOOF_SANDBOX_NPROC_FLOOR;
     delete clean.BOOF_SANDBOX_NPROC_HEADROOM;
     const parse = (out: string) =>
-      /limits nproc=(\d+)\/(\d+) nice=(\d+) nice_rlim=(\d+)\/(\d+) host=(\d+) floor=(\S+) headroom=(\S+)/.exec(
+      /limits nproc=(\d+)\/(\d+) nice=(\d+) nice_rlim=(\d+)\/(\d+) rtprio_rlim=(\d+)\/(\d+) host=(\d+) floor=(\S+) headroom=(\S+)/.exec(
         out,
       );
     // Default: generous floor, and the knobs are gone before the command runs.
@@ -697,6 +697,9 @@ describe.skipIf(process.platform !== "linux" || hostAbi < 6)("boof-sandbox", () 
     // F: the command cannot raise its priority again.
     expect(m![4]).toBe("0");
     expect(m![5]).toBe("0");
+    // N2: and cannot go real-time.
+    expect(m![6]).toBe("0");
+    expect(m![7]).toBe("0");
     // Knobs come from the helper's environment and are removed before exec.
     const knobbed = await run(basePolicy([]), [probe, "limits"], 8000, {
       ...clean,
@@ -707,9 +710,9 @@ describe.skipIf(process.platform !== "linux" || hostAbi < 6)("boof-sandbox", () 
     expect(k).not.toBeNull();
     // The basis is the caller's tasks (never more than the host's) plus the headroom.
     expect(Number(k![1])).toBeGreaterThanOrEqual(1000);
-    expect(Number(k![1])).toBeLessThanOrEqual(Number(k![6]) + 1000);
-    expect(k![7]).toBe("unset");
-    expect(k![8]).toBe("unset");
+    expect(Number(k![1])).toBeLessThanOrEqual(Number(k![8]) + 1000);
+    expect(k![9]).toBe("unset");
+    expect(k![10]).toBe("unset");
     const bad = await run(basePolicy([]), [probe, "limits"], 8000, {
       ...clean,
       BOOF_SANDBOX_NPROC_HEADROOM: "lots",
@@ -818,6 +821,34 @@ describe.skipIf(process.platform !== "linux" || hostAbi < 6)("boof-sandbox", () 
         testHelper,
       );
       expectHelperError(result, text);
+    }
+  });
+
+  it("N1 skips a process that exits mid-scan instead of failing the start", async () => {
+    await tree();
+    const raced = await run(
+      basePolicy([]),
+      [probe, "limits"],
+      8000,
+      { ...process.env, BOOF_SANDBOX_FAULT: "proc-race" },
+      testHelper,
+    );
+    expect(raced.code).toBe(0);
+    expect(raced.stdout).toMatch(/limits nproc=/);
+  });
+
+  it("N1 starts reliably while same-uid processes churn", async () => {
+    await tree();
+    const workers = Array.from({ length: 6 }, () =>
+      spawn("sh", ["-c", "while :; do sh -c 'exit 0'; done"], { stdio: "ignore" }),
+    );
+    try {
+      for (let i = 0; i < 25; i += 1) {
+        const result = await run(basePolicy([]), [probe, "limits"], 8000, undefined, testHelper);
+        expect(result.code).toBe(0);
+      }
+    } finally {
+      for (const worker of workers) worker.kill("SIGKILL");
     }
   });
 
