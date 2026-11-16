@@ -261,13 +261,27 @@ build_app() {
   fi
 }
 
+# The real path of a file: realpath, else readlink -f (older macOS has neither realpath nor
+# readlink -f), else the directory's physical path plus the file name (no symlink on the file itself).
+resolve_path() {
+  local p="$1" out
+  out="$(realpath "$p" 2>/dev/null)" && [[ -n "$out" ]] && { printf '%s\n' "$out"; return 0; }
+  out="$(readlink -f "$p" 2>/dev/null)" && [[ -n "$out" ]] && { printf '%s\n' "$out"; return 0; }
+  if [[ ! -L "$p" && -e "$p" ]]; then
+    out="$(cd -P "$(dirname "$p")" 2>/dev/null && pwd -P)" && [[ -n "$out" ]] \
+      && { printf '%s/%s\n' "$out" "$(basename "$p")"; return 0; }
+  fi
+  return 1
+}
+
 # True when a `boof` command exists that is not this checkout's CLI: it is never overwritten.
+# When the two cannot be compared, it counts as foreign (only boof-runner is linked).
 foreign_boof() {
   local dir="$1" found ours theirs
   found="$(command -v boof 2>/dev/null)" || return 1
-  ours="$(realpath "$dir/bin/dist/boof-runner.js" 2>/dev/null || true)"
-  theirs="$(realpath "$found" 2>/dev/null || true)"
-  [[ -n "$theirs" && "$theirs" != "$ours" ]]
+  ours="$(resolve_path "$dir/bin/dist/boof-runner.js" || true)"
+  theirs="$(resolve_path "$found" || true)"
+  [[ -z "$ours" || -z "$theirs" || "$theirs" != "$ours" ]]
 }
 
 # Links only boof-runner (into the npm global bin folder), leaving an unrelated `boof` alone.

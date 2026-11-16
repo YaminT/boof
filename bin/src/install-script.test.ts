@@ -50,6 +50,18 @@ describe("install script", () => {
       await run("ln", ["-s", join(checkout, "bin", "dist", "boof-runner.js"), other]);
       const ours = await fn(`PATH="${bin}:$PATH"; foreign_boof "$1"`, checkout);
       expect(ours.code).toBe(1);
+      // Without realpath (older macOS) the comparison still works through readlink -f.
+      const noRealpath = await fn(
+        `realpath() { return 127; }; PATH="${bin}:$PATH"; foreign_boof "$1"`,
+        checkout,
+      );
+      expect(noRealpath.code).toBe(1);
+      // Without either, a plain file is compared by its physical directory.
+      const bare = await fn(
+        `realpath() { return 127; }; readlink() { return 127; }; PATH="${bin}:$PATH"; foreign_boof "$1"`,
+        checkout,
+      );
+      expect(bare.code).toBe(0); // our own link cannot be resolved: treated as foreign, runner-only
     },
   );
 

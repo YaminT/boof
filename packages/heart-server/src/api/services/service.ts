@@ -2135,7 +2135,7 @@ function toolReadiness(
   }
   return {
     ready: true,
-    readyReason: `Installed. If it asks you to sign in, run ${id} once in a terminal.`,
+    readyReason: `Installed. If it asks you to sign in, run ${id === "claude-code" ? "claude" : id} once in a terminal.`,
   };
 }
 

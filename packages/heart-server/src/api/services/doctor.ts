@@ -61,6 +61,15 @@ export async function writableDirCheck(
         message: `${dir} does not exist yet; it is created with the first project.`,
         fixPage: "projects",
       };
+    // A data folder that does not exist yet is created when the server first starts.
+    if (id === "dataRoot" && missing)
+      return {
+        id,
+        label,
+        status: "warn",
+        message: `${dir} does not exist yet; it is created when boof first starts.`,
+        fixPage: "general",
+      };
     return {
       id,
       label,

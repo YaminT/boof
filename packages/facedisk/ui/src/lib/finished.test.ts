@@ -20,6 +20,16 @@ const state = (over: Partial<TopbarState> = {}): TopbarState => ({
 });
 
 describe("finished memory", () => {
+  it("counts only the tasks that are done, not failed or stopped ones", () => {
+    let m = stepFinished(EMPTY_FINISHED, idle({ kind: "running", running: ["p/a"] }));
+    m = stepFinished(m, idle({ kind: "running", running: ["p/b"], queued: 1 }));
+    m = stepFinished(m, idle({ now: 5000, notDone: ["p/b"] }));
+    expect(m.finished).toEqual({ count: 1, at: 5000 });
+    let all = stepFinished(EMPTY_FINISHED, idle({ kind: "running", running: ["p/a"] }));
+    all = stepFinished(all, idle({ now: 5000, notDone: ["p/a"] }));
+    expect(all.finished).toBeNull();
+  });
+
   it("remembers the tasks that ran and finishes when the queue empties", () => {
     let m = stepFinished(EMPTY_FINISHED, idle({ kind: "running", running: ["p/a"] }));
     m = stepFinished(m, idle({ kind: "running", running: ["p/b"], queued: 1 }));

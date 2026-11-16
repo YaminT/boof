@@ -28,7 +28,8 @@ export function parseRoute(path: string): Route | null {
   // One leading and one trailing slash are fine; empty, "." and ".." segments are not routes, and
   // neither are paths longer than the ones the server answers with the UI (see isUiPath).
   const trimmed = path.replace(/^\//, "").replace(/\/$/, "");
-  if (trimmed === "") return { name: "home" };
+  // "./" is how formatRoute writes Home.
+  if (trimmed === "" || trimmed === ".") return { name: "home" };
   let segs: string[];
   try {
     segs = trimmed.split("/").map((s) => decodeURIComponent(s));
