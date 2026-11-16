@@ -261,15 +261,38 @@ build_app() {
   fi
 }
 
+# True when a `boof` command exists that is not this checkout's CLI: it is never overwritten.
+foreign_boof() {
+  local dir="$1" found ours theirs
+  found="$(command -v boof 2>/dev/null)" || return 1
+  ours="$(realpath "$dir/bin/dist/boof-runner.js" 2>/dev/null || true)"
+  theirs="$(realpath "$found" 2>/dev/null || true)"
+  [[ -n "$theirs" && "$theirs" != "$ours" ]]
+}
+
+# Links only boof-runner (into the npm global bin folder), leaving an unrelated `boof` alone.
+link_runner_only() {
+  local dir="$1" bindir
+  bindir="$(npm prefix -g)/bin"
+  mkdir -p "$bindir"
+  chmod +x "$dir/bin/dist/boof-runner.js"
+  ln -sf "$dir/bin/dist/boof-runner.js" "$bindir/boof-runner"
+}
+
 install_command() {
   local dir="$1"
+  if foreign_boof "$dir"; then
+    log "A different 'boof' command exists ($(command -v boof)); leaving it alone and linking boof-runner only"
+    link_runner_only "$dir"
+    return 0
+  fi
   case "$INSTALL_MODE" in
     link)
-      log "Linking boof-runner globally"
+      log "Linking boof-runner and boof globally"
       (cd "$dir" && npm link)
       ;;
     copy)
-      log "Installing boof-runner globally"
+      log "Installing boof-runner and boof globally"
       # npm 7+ symlinks a directory install, so the CLI's external dependencies resolve from $dir.
       npm install -g "$dir"
       ;;

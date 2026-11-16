@@ -46,7 +46,7 @@ describe("SetupCheckWidget", () => {
   it("is one compact line when everything works, gateway optional", () => {
     const out = html(status(true, [check({}), gatewayAbsent]));
     expect(out).toContain('data-state="compact"');
-    expect(out).toContain("Setup OK: 2 agents ready · gateway not configured (optional)");
+    expect(out).toContain("Doctor: OK · 2 agents ready · gateway not configured (optional)");
     expect(out).not.toContain('data-testid="check-git"');
     expect(out).toContain("Show details");
     expect(out).toContain("Check again");
@@ -69,6 +69,6 @@ describe("SetupCheckWidget", () => {
   });
 
   it("still renders while the first answer is pending", () => {
-    expect(html(null)).toContain("Setup check");
+    expect(html(null)).toContain("Doctor");
   });
 });

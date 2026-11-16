@@ -69,7 +69,7 @@ const SettingsScreen = lazy(() =>
 
 export function App() {
   const { route, navigate } = useRoute();
-  // The setup check is a widget on the first page; the full doctor page shows only when boof cannot
+  // The Doctor is a widget on the first page; the full doctor page shows only when boof cannot
   // work (or when opened). Readiness itself is never stored: it is asked for again.
   const harnesses = useHarnesses();
   const gate = gateOf(harnesses);

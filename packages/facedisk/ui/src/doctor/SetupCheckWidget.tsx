@@ -6,7 +6,7 @@ import { formatRoute } from "../lib/route.js";
 import { CheckRows, LINK } from "./CheckRows.js";
 
 /**
- * The setup check on the first page: always shown, never blocking. One line when everything
+ * The Doctor widget on the first page: always shown, never blocking. One line when everything
  * passes (with a toggle for the rows); open by itself when something needs attention. It reads the
  * shared harness state, so it adds no request of its own.
  */
@@ -23,22 +23,22 @@ export function SetupCheckWidget({
   const open = chosen ?? attention;
   return (
     <section
-      aria-label="Setup check"
+      aria-label="Doctor"
       data-testid="setup-check"
       data-state={open ? "expanded" : "compact"}
       className="flex flex-col gap-3 rounded-[10px] border border-line bg-surface p-3 text-[length:var(--text-row)]"
     >
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-        <h2 className="m-0 text-[length:var(--text-body)] font-semibold">Setup check</h2>
+        <h2 className="m-0 text-[length:var(--text-body)] font-semibold">Doctor</h2>
         <span
           data-testid="setup-check-summary"
           className={`min-w-0 flex-1 ${attention ? "text-attention" : "text-ink-muted"}`}
         >
           {denied
-            ? "This key cannot read the setup checks."
+            ? "This key cannot read the Doctor."
             : status
               ? attention
-                ? "Setup needs attention"
+                ? "Needs attention"
                 : compactSummary(status)
               : failed
                 ? "Could not run the checks."

@@ -324,7 +324,7 @@ describe("draftWait", () => {
     expect(w.why).toContain("resumes at 14:05");
     expect(w.action).toBeUndefined();
   });
-  it("sends a missing agent to the setup check", () => {
+  it("sends a missing agent to the Doctor", () => {
     const w = draftWait({
       status: "pending",
       elapsedMs: 60_000,
