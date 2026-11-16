@@ -3,7 +3,7 @@ import { chmod, mkdir, realpath, stat } from "node:fs/promises";
 import { createInterface } from "node:readline";
 import { Writable } from "node:stream";
 import { homedir } from "node:os";
-import { dirname, isAbsolute, relative, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import {
   expandHome,
   OwlishSettingsSchema,
@@ -405,7 +405,15 @@ const sameOrInside = (parent: string, child: string): boolean => {
 
 /** Why `path` cannot be the projects folder (the rule of assertRegistrationAllowed), or null. */
 async function refuseProjectsRoot(path: string, dataRoot: string): Promise<string | null> {
-  const real = async (p: string) => realpath(p).catch(() => p);
+  // Resolve through the deepest existing parent (a folder not made yet still sits behind symlinks).
+  const real = async (p: string): Promise<string> => {
+    try {
+      return await realpath(p);
+    } catch {
+      const up = dirname(p);
+      return up === p ? p : join(await real(up), basename(p));
+    }
+  };
   const target = await real(path);
   if (dirname(target) === target) return "the filesystem root cannot be the projects folder.";
   if (target === (await real(homedir())))
