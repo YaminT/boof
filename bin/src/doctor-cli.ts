@@ -1,69 +1,467 @@
-import type { CachedInstall } from "@boof/heart";
+import { spawn } from "node:child_process";
+import { chmod, mkdir, stat } from "node:fs/promises";
+import { createInterface } from "node:readline";
+import { Writable } from "node:stream";
+import { isAbsolute, resolve } from "node:path";
+import {
+  expandHome,
+  OwlishSettingsSchema,
+  resolveProjectsRoot,
+  SecuritySettingsSchema,
+} from "@boof/heart";
+import type { HarnessStatusResult, TaskService } from "@boof/heart-server";
 
-export const DOCTOR_HELP = `boof-runner doctor — see which coding agents are installed
+type DoctorCheck = HarnessStatusResult["checks"][number];
+
+export const DOCTOR_HELP = `boof doctor — check this computer, and fix what is missing
 
 Usage:
-  boof-runner doctor [--json]
+  boof doctor [--json] [-d <data>]
+  boof doctor --fix [--yes] [-d <data>]
 
-Prints each coding agent (harness) with its version and path, and the PATH boof looks in.
-Free: it never sends a prompt. Exit 0 when at least one is installed, 1 when none is.`;
+Prints the same checks as the Doctor in the web app: the coding agents (ready or not, and why),
+the better-ccflare gateway, the projects folder, git, the data folder and the sandbox.
+Free: it never sends a prompt. Exit 0 when boof can work (an agent is ready), 1 when it cannot.
 
-export interface DoctorCatalog {
-  list(): readonly { id: string; displayName: string }[];
-  installedAll(maxAgeMs?: number): Promise<Readonly<Record<string, Readonly<CachedInstall>>>>;
+--fix walks the checks that need attention, one at a time, and asks before it does anything. It
+needs an interactive terminal (exit 2 without one). Install commands are printed; an npm install
+runs only after you answer y. boof never runs sudo. Secrets are typed hidden and stored where boof
+already keeps them (mode 0600).
+--yes accepts the safe defaults (create the projects folder, make the data folder private) and
+never an install or a secret.`;
+
+/** The part of the server's service the doctor uses. Tests pass a real one over a scratch folder. */
+export type DoctorService = Pick<
+  TaskService,
+  | "root"
+  | "harnesses"
+  | "loadSettings"
+  | "updateSettings"
+  | "settingsStore"
+  | "owlishSecrets"
+  | "projectKeys"
+  | "listProjects"
+>;
+
+/** Terminal access. Tests pass a scripted one. */
+export interface DoctorIo {
+  isTTY: boolean;
+  out(line: string): void;
+  err(line: string): void;
+  /** One answer; `hidden` input is never echoed. */
+  ask(question: string, opts?: { hidden?: boolean }): Promise<string>;
+  /** Runs an install command with the terminal attached; resolves with its exit code. */
+  run(command: string, args: readonly string[]): Promise<number>;
+  close(): void;
 }
 
-/** `boof-runner doctor`: the install check of every registered tool. */
-export async function doctorCommand(
-  argv: readonly string[],
-  catalog: DoctorCatalog,
-  env: Readonly<Record<string, string | undefined>> = process.env,
-): Promise<number> {
-  const words = argv.filter((a) => !a.startsWith("-"));
-  const flags = argv.filter((a) => a.startsWith("-"));
+export interface DoctorDeps {
+  service: (root: string) => DoctorService;
+  defaultRoot: () => string;
+  io?: DoctorIo;
+  platform?: NodeJS.Platform;
+  /** Whether `npm` can be run (for the install offer). */
+  hasNpm?: () => Promise<boolean>;
+}
+
+const MARK = { pass: "✓", warn: "!", fail: "✗" } as const;
+
+/** The npm packages of the agents that install with npm (the same commands as the web Agents page). */
+const NPM_PACKAGE: Record<string, string> = {
+  "claude-code": "@anthropic-ai/claude-code",
+  codex: "@openai/codex",
+  opencode: "opencode-ai",
+};
+
+/** Why boof cannot work, or null: no agent is ready, or git or the data folder hard-fails. */
+export function blockReason(status: HarnessStatusResult): string | null {
+  if (!status.anyReady) return "Cannot run tasks yet: no coding agent is ready";
+  const hard = status.checks.find(
+    (c) => c.status === "fail" && (c.id === "git" || c.id === "dataRoot"),
+  );
+  return hard ? `Cannot run tasks yet: ${hard.label} is not usable` : null;
+}
+
+function needsAttention(status: HarnessStatusResult): boolean {
+  return status.checks.some(
+    (c) =>
+      c.status === "fail" ||
+      (c.status === "warn" &&
+        !(c.id === "gateway" && status.anyReady && c.message === "Not configured.")),
+  );
+}
+
+function compactSummary(status: HarnessStatusResult): string {
+  const n = Object.values(status.tools).filter((t) => t.ready).length;
+  const gw = status.checks.find((c) => c.id === "gateway");
+  const gateway = !gw || gw.status === "pass" ? "gateway OK" : "gateway not configured (optional)";
+  return `Doctor: OK · ${n} agent${n === 1 ? "" : "s"} ready · ${gateway}`;
+}
+
+/** The table, in the order and words of the web Doctor. */
+export function renderDoctor(status: HarnessStatusResult): string[] {
+  const lines = ["Doctor", ""];
+  const reason = blockReason(status);
+  const clean = !status.checks.some((c) => c.status !== "pass");
+  lines.push(
+    reason ?? (clean ? "All set" : "All set: an agent is ready"),
+    ...(reason || needsAttention(status) ? [] : [compactSummary(status)]),
+    "",
+  );
+  const width = Math.max(...status.checks.map((c) => c.label.length));
+  for (const c of status.checks) {
+    lines.push(`${MARK[c.status]} ${c.label.padEnd(width)}  ${c.message}`);
+    if (c.status !== "pass" && c.fixHint) lines.push(`  ${" ".repeat(width)}  ${c.fixHint}`);
+  }
+  lines.push("", "Coding agents");
+  for (const [id, t] of Object.entries(status.tools)) {
+    lines.push(
+      `${t.ready ? MARK.pass : MARK.fail} ${id.padEnd(14)} ${t.displayName}: ${t.ready ? "ready" : "not ready"} — ${t.readyReason}`,
+    );
+    if (!t.ready && t.fixHint) lines.push(`  ${" ".repeat(14)} ${t.fixHint}`);
+  }
+  return lines;
+}
+
+/** A real terminal: readline over stdin/stdout; hidden answers are swallowed before they echo. */
+export function terminalIo(): DoctorIo {
+  let muted = false;
+  const output = new Writable({
+    write(chunk, _enc, cb) {
+      if (!muted) process.stdout.write(chunk);
+      cb();
+    },
+  });
+  const rl = createInterface({ input: process.stdin, output, terminal: true });
+  return {
+    isTTY: !!process.stdin.isTTY && !!process.stdout.isTTY,
+    out: (l) => console.log(l),
+    err: (l) => console.error(l),
+    ask: (question, opts) =>
+      new Promise<string>((done) => {
+        process.stdout.write(question);
+        muted = opts?.hidden === true;
+        rl.question("", (answer) => {
+          muted = false;
+          if (opts?.hidden) process.stdout.write("\n");
+          done(answer);
+        });
+      }),
+    run: (command, args) =>
+      new Promise<number>((done) => {
+        const child = spawn(command, [...args], { stdio: "inherit" });
+        child.on("error", () => done(127));
+        child.on("close", (code) => done(code ?? 1));
+      }),
+    close: () => rl.close(),
+  };
+}
+
+async function npmAvailable(): Promise<boolean> {
+  return new Promise((done) => {
+    const child = spawn("npm", ["--version"], { stdio: "ignore" });
+    child.on("error", () => done(false));
+    child.on("close", (code) => done(code === 0));
+  });
+}
+
+const yes = (answer: string) => /^y(es)?$/i.test(answer.trim());
+
+interface Ctx {
+  svc: DoctorService;
+  io: DoctorIo;
+  assumeYes: boolean;
+  platform: NodeJS.Platform;
+  hasNpm: () => Promise<boolean>;
+}
+
+function gitInstallHelp(platform: NodeJS.Platform): string[] {
+  if (platform === "darwin")
+    return ["Install git with Homebrew: brew install git (or run: xcode-select --install)."];
+  if (platform === "win32")
+    return ["Install git with: winget install --id Git.Git (or from https://git-scm.com)."];
+  return [
+    "Install git with your package manager, for example:",
+    "  Debian/Ubuntu: sudo apt install git",
+    "  Fedora:        sudo dnf install git",
+    "  Arch:          sudo pacman -S git",
+    "boof does not run sudo for you.",
+  ];
+}
+
+async function fixAgents(ctx: Ctx, status: HarnessStatusResult): Promise<void> {
+  const { io } = ctx;
+  for (const [id, tool] of Object.entries(status.tools)) {
+    if (tool.ready || tool.installed) continue;
+    io.out(`\n${tool.displayName} (${id}) is not installed: ${tool.readyReason}`);
+    const pkg = NPM_PACKAGE[id];
+    if (!pkg) {
+      io.out(tool.fixHint ?? "Install it, then run the Doctor again.");
+      continue;
+    }
+    const command = `npm install -g ${pkg}`;
+    io.out(`To install it, run: ${command}`);
+    if (!(await ctx.hasNpm())) {
+      io.out("npm was not found; install Node.js with npm first, or install it another way.");
+      continue;
+    }
+    if (ctx.assumeYes) {
+      io.out("(--yes never installs anything.)");
+      continue;
+    }
+    if (!yes(await io.ask(`Run "${command}" now? [y/N] `))) continue;
+    const code = await io.run("npm", ["install", "-g", pkg]);
+    if (code !== 0)
+      io.out(
+        `The install failed (exit ${code}). If it was a permissions error, point npm at a folder you own ` +
+          `(npm config set prefix ~/.local) and run it again. boof never runs sudo.`,
+      );
+  }
+}
+
+async function fixGateway(ctx: Ctx, check: DoctorCheck): Promise<void> {
+  const { io, svc } = ctx;
+  io.out(`\n${check.label}: ${check.message}`);
+  io.out(
+    "The gateway shares your Claude accounts between tasks. It is optional while a coding agent works without it.\n" +
+      "You can give boof its address (and its client key), or an Anthropic API key for one project.",
+  );
+  if (ctx.assumeYes) {
+    io.out("(--yes never enters a key or an address.)");
+    return;
+  }
+  if (!yes(await io.ask("Set this up now? [y/N] "))) return;
+  const choice = (await io.ask("1 = gateway address, 2 = Anthropic API key (Enter to skip): "))
+    .trim()
+    .toLowerCase();
+  if (choice === "1") {
+    const url = (
+      await io.ask("better-ccflare gateway URL (for example http://localhost:8080): ")
+    ).trim();
+    if (!url) return;
+    const current = (await svc.loadSettings()).owlish;
+    const parsed = OwlishSettingsSchema.safeParse({
+      url,
+      healthGate: current?.healthGate ?? "pause",
+    });
+    if (!parsed.success) {
+      io.out(`That address is not accepted: ${parsed.error.issues[0]?.message ?? "invalid URL"}`);
+      return;
+    }
+    const key = (
+      await io.ask("Gateway client key (hidden; Enter to keep the current one): ", {
+        hidden: true,
+      })
+    ).trim();
+    if (key) {
+      try {
+        await svc.owlishSecrets.set(key);
+      } catch (e) {
+        io.out(`The key was not saved: ${e instanceof Error ? e.message : "invalid key"}`);
+        return;
+      }
+    }
+    await svc.updateSettings({ owlish: parsed.data });
+    io.out(`Saved the gateway address${key ? " and key" : ""}.`);
+  } else if (choice === "2") {
+    const projects = (await svc.listProjects()).filter((p) => !p.archived);
+    if (projects.length === 0) {
+      io.out(
+        "An API key belongs to a project, and there is none yet. Add a project first, then run this again.",
+      );
+      return;
+    }
+    let id = projects[0]!.id;
+    if (projects.length > 1) {
+      id = (await io.ask(`Project (${projects.map((p) => p.id).join(", ")}): `)).trim();
+      if (!projects.some((p) => p.id === id)) {
+        io.out("No such project.");
+        return;
+      }
+    }
+    const key = (await io.ask(`Anthropic API key for ${id} (hidden): `, { hidden: true })).trim();
+    if (!key) return;
+    await svc.projectKeys.set(id, key);
+    io.out(`Saved the API key for ${id}.`);
+  }
+}
+
+async function fixProjectsRoot(ctx: Ctx, check: DoctorCheck): Promise<void> {
+  const { io, svc } = ctx;
+  io.out(`\n${check.label}: ${check.message}`);
+  const settings = await svc.loadSettings();
+  const suggested = resolveProjectsRoot(settings);
+  io.out(`boof keeps the projects it creates in this folder (default ${suggested}).`);
+  if (!ctx.assumeYes && !yes(await io.ask("Create it and save it as your projects folder? [y/N] ")))
+    return;
+  let path = suggested;
+  if (!ctx.assumeYes) {
+    const typed = (await io.ask(`Folder [${suggested}]: `)).trim();
+    if (typed) path = isAbsolute(expandHome(typed)) ? expandHome(typed) : "";
+    if (!path) {
+      io.out("Use an absolute path (or one starting with ~/).");
+      return;
+    }
+  }
+  path = resolve(path);
+  try {
+    await mkdir(path, { recursive: true, mode: 0o700 });
+    await chmod(path, 0o700).catch(() => undefined);
+    const security = SecuritySettingsSchema.parse(settings.security ?? {});
+    await svc.settingsStore.update({
+      projectsRoot: path,
+      security: {
+        ...security,
+        allowedProjectRoots: [...new Set([...security.allowedProjectRoots, path])],
+      },
+    });
+    io.out(`Created ${path} and saved it as the projects folder.`);
+  } catch (e) {
+    io.out(`Could not set it up: ${e instanceof Error ? e.message : String(e)}`);
+  }
+}
+
+async function fixDataRoot(ctx: Ctx, check: DoctorCheck): Promise<void> {
+  const { io, svc } = ctx;
+  io.out(`\n${check.label}: ${check.message}`);
+  const exists = await stat(svc.root).then(
+    (s) => s.isDirectory(),
+    () => false,
+  );
+  io.out(
+    exists
+      ? `boof can make ${svc.root} private to you (chmod 700).`
+      : `${svc.root} does not exist; boof can create it, private to you (mode 700).`,
+  );
+  if (!ctx.assumeYes && !yes(await io.ask("Do it? [y/N] "))) return;
+  try {
+    if (!exists) await mkdir(svc.root, { recursive: true, mode: 0o700 });
+    await chmod(svc.root, 0o700);
+    io.out("Done.");
+  } catch (e) {
+    io.out(
+      `That did not work: ${e instanceof Error ? e.message : String(e)}. Choose a folder you own with -d.`,
+    );
+  }
+}
+
+async function walk(ctx: Ctx, status: HarnessStatusResult): Promise<void> {
+  const { io } = ctx;
+  const todo = status.checks.filter((c) => c.status !== "pass");
+  if (todo.length === 0) {
+    io.out("\nNothing to fix.");
+    return;
+  }
+  for (const check of todo) {
+    switch (check.id) {
+      case "agents":
+        await fixAgents(ctx, status);
+        break;
+      case "gateway":
+        await fixGateway(ctx, check);
+        break;
+      case "projectsRoot":
+        await fixProjectsRoot(ctx, check);
+        break;
+      case "dataRoot":
+        await fixDataRoot(ctx, check);
+        break;
+      case "git":
+        io.out(`\n${check.label}: ${check.message}`);
+        for (const l of gitInstallHelp(ctx.platform)) io.out(l);
+        break;
+      case "sandbox":
+        io.out(`\n${check.label}: ${check.message}`);
+        io.out(
+          "Nothing to fix here; boof works without it. It is set up in Settings when your computer supports it.",
+        );
+        break;
+    }
+  }
+}
+
+function dataOption(args: readonly string[]): { data?: string; rest: string[]; bad?: string } {
+  const rest: string[] = [];
+  let data: string | undefined;
+  for (let i = 0; i < args.length; i += 1) {
+    const a = args[i]!;
+    if (a === "-d" || a === "--data") {
+      data = args[i + 1];
+      if (!data || data.startsWith("-")) return { rest, bad: `${a} needs a folder` };
+      i += 1;
+    } else if (a.startsWith("--data=")) data = a.slice("--data=".length);
+    else rest.push(a);
+  }
+  return { ...(data ? { data } : {}), rest };
+}
+
+/** `boof doctor` and `boof-runner doctor`: the Doctor checks in the terminal, and `--fix`. */
+export async function doctorCommand(argv: readonly string[], deps: DoctorDeps): Promise<number> {
+  const { data, rest, bad } = dataOption(argv);
+  const words = rest.filter((a) => !a.startsWith("-"));
+  const flags = rest.filter((a) => a.startsWith("-"));
   if (flags.includes("--help") || flags.includes("-h")) {
     console.log(DOCTOR_HELP);
     return 0;
   }
-  const unknown = flags.filter((f) => f !== "--json");
-  if (unknown.length > 0 || words.length > 0) {
-    console.error(`unknown command: doctor ${[...words, ...unknown].join(" ")}`);
+  const unknown = flags.filter((f) => !["--json", "--fix", "--yes", "-y"].includes(f));
+  if (bad || unknown.length > 0 || words.length > 0) {
+    console.error(bad ?? `unknown command: doctor ${[...words, ...unknown].join(" ")}`);
     return 1;
   }
-  const installs = await catalog.installedAll(0);
-  const tools = catalog
-    .list()
-    .filter((t) => installs[t.id] !== undefined && !installs[t.id]!.hidden);
-  const anyInstalled = tools.some((t) => installs[t.id]!.installed);
-  const pathUsed = env.PATH ?? env.Path ?? "";
-  if (flags.includes("--json")) {
-    console.log(
-      JSON.stringify(
-        {
-          tools: Object.fromEntries(
-            tools.map((t) => {
-              const { checkedAt: _c, ...rest } = installs[t.id]!;
-              return [t.id, { displayName: t.displayName, ...rest }];
-            }),
-          ),
-          anyInstalled,
-          path: pathUsed,
-        },
-        null,
-        2,
-      ),
-    );
-    return anyInstalled ? 0 : 1;
+  const json = flags.includes("--json");
+  const fix = flags.includes("--fix");
+  const assumeYes = flags.includes("--yes") || flags.includes("-y");
+  if (assumeYes && !fix) {
+    console.error("--yes only goes with --fix");
+    return 1;
   }
-  for (const t of tools) {
-    const r = installs[t.id]!;
-    const where = r.path ? `  ${r.path}` : "";
-    const off = r.foundOffPath ? "  (not on PATH)" : "";
-    console.log(
-      `${r.installed ? "ok  " : "--  "} ${t.id.padEnd(14)} ${r.installed ? (r.version ?? "installed") : r.message}${where}${off}`,
-    );
+  if (json && fix) {
+    console.error("--json cannot be combined with --fix");
+    return 1;
   }
-  console.log(`\nPATH: ${pathUsed || "(empty)"}`);
-  if (!anyInstalled) console.error("\nNo coding agent found. Install claude, codex or opencode.");
-  return anyInstalled ? 0 : 1;
+  const root = data ? resolve(process.cwd(), data) : deps.defaultRoot();
+  const svc = deps.service(root);
+
+  if (!fix) {
+    const status = await svc.harnesses(true);
+    if (json) {
+      console.log(
+        JSON.stringify(
+          { ok: blockReason(status) === null, blockReason: blockReason(status), ...status },
+          null,
+          2,
+        ),
+      );
+    } else {
+      for (const l of renderDoctor(status)) console.log(l);
+    }
+    return blockReason(status) === null ? 0 : 1;
+  }
+
+  const io = deps.io ?? terminalIo();
+  try {
+    if (!io.isTTY) {
+      io.err(
+        "boof doctor --fix asks questions, so it needs an interactive terminal. Run it in a terminal, or use `boof doctor` to only see the checks.",
+      );
+      return 2;
+    }
+    const ctx: Ctx = {
+      svc,
+      io,
+      assumeYes,
+      platform: deps.platform ?? process.platform,
+      hasNpm: deps.hasNpm ?? npmAvailable,
+    };
+    const before = await svc.harnesses(true);
+    for (const l of renderDoctor(before)) io.out(l);
+    await walk(ctx, before);
+    const after = await svc.harnesses(true);
+    io.out("\nAfter the fixes:\n");
+    for (const l of renderDoctor(after)) io.out(l);
+    return blockReason(after) === null ? 0 : 1;
+  } finally {
+    io.close();
+  }
 }

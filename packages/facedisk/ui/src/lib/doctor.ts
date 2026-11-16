@@ -91,7 +91,7 @@ export function compactSummary(status: HarnessStatus): string {
   const n = Object.values(status.tools).filter((t) => t.ready).length;
   const gw = status.checks.find((c) => c.id === "gateway");
   const gateway = !gw || gw.status === "pass" ? "gateway OK" : "gateway not configured (optional)";
-  return `Setup OK: ${n} agent${n === 1 ? "" : "s"} ready · ${gateway}`;
+  return `Doctor: OK · ${n} agent${n === 1 ? "" : "s"} ready · ${gateway}`;
 }
 
 const FIX_PAGE: Record<DoctorFixPage, SettingsPageId> = {

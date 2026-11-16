@@ -6,7 +6,7 @@ import { CheckRows } from "./CheckRows.js";
 import { HarnessPanel } from "../settings/HarnessPanel.js";
 
 /**
- * The full setup check, check by check. Only "boof cannot work" blocks the rest of the app (App
+ * The full Doctor page, check by check. Only "boof cannot work" blocks the rest of the app (App
  * does the redirect); this page reports and offers the fixes.
  * Nothing here is a secret: install paths, versions and yes/no answers.
  */
@@ -27,8 +27,8 @@ export function DoctorPage({
     return (
       <Shell>
         <p role="note" data-testid="doctor-denied" className="m-0">
-          This key cannot read the setup checks. Ask the owner of this boof to check that a coding
-          agent is ready (the Doctor page needs the settings:read scope).
+          This key cannot read the Doctor. Ask the owner of this boof to check that a coding agent
+          is ready (the Doctor page needs the settings:read scope).
         </p>
         <div>
           <Button onClick={onContinue}>Back to boof</Button>
@@ -85,9 +85,7 @@ export function DoctorPage({
 function Shell({ children }: { children: React.ReactNode }) {
   return (
     <div className="mx-auto my-[6vh] flex max-w-[720px] flex-col gap-4 rounded-[10px] border border-line bg-surface p-6 shadow-md">
-      <h1 className="m-0 text-[length:var(--text-title,1.25rem)] font-semibold">
-        Boof setup check
-      </h1>
+      <h1 className="m-0 text-[length:var(--text-title,1.25rem)] font-semibold">Boof Doctor</h1>
       {children}
     </div>
   );

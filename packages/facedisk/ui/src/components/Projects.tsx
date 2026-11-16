@@ -230,7 +230,7 @@ export function AddProjectGate({
 }: {
   onAdded: (project: Project) => void;
   projectsRoot?: string;
-  /** The always-visible setup check widget. */
+  /** The always-visible Doctor widget. */
   setupCheck?: ReactNode;
 }) {
   return (

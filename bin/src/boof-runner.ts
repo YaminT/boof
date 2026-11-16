@@ -94,7 +94,7 @@ Usage:
   boof-runner service <install|uninstall|status|logs>  Run boof-runner as a systemd user service on Linux (see: service --help)
   boof-runner mcp [options]            Serve boof over MCP on stdin/stdout for an agent host (see: mcp --help)
   boof-runner sandbox check            Print whether enforce would work (see: sandbox --help)
-  boof-runner doctor [--json]          Print which coding agents are installed (see: doctor --help)
+  boof-runner doctor [--json|--fix]    Check this computer like the web Doctor; --fix walks you through the fixes (see: doctor --help)
   boof-runner open [options]           Print a single-use sign-in link for the web UI (see: open --help)
   boof-runner backup --out <file.tar.gz> [-d <root>]  Copy a data root to an archive (see: backup --help)
   boof-runner restore --from <file.tar.gz> -d <root>  Restore an archive into an empty directory (see: restore --help)
@@ -805,7 +805,11 @@ async function dispatch(cmd: string | undefined, rest: string[], argv: string[])
       );
       break;
     case "doctor":
-      code = await doctorCommand(rest, new ToolRegistry());
+      code = await doctorCommand(rest, {
+        defaultRoot: defaultDataRoot,
+        service: (root) =>
+          new TaskService(root, new ToolRegistry(), { authStore: new AuthStore(root) }),
+      });
       break;
     case "sandbox":
       code = await sandboxCommand(rest, () => assessSandbox());

@@ -35,6 +35,21 @@ describe("install script", () => {
     expect(r).toMatchObject({ code: 0, stdout: "sourced\n" });
   });
 
+  it("never treats an unrelated `boof` as its own, and recognises the checkout's CLI", async () => {
+    const checkout = join(dir, "checkout");
+    const bin = join(dir, "bin");
+    await run("mkdir", ["-p", join(checkout, "bin", "dist"), bin]);
+    await writeFile(join(checkout, "bin", "dist", "boof-runner.js"), "#!/usr/bin/env node\n");
+    const other = join(bin, "boof");
+    await writeFile(other, "#!/bin/sh\n", { mode: 0o755 });
+    const foreign = await fn(`PATH="${bin}:$PATH"; foreign_boof "$1"`, checkout);
+    expect(foreign.code).toBe(0);
+    await run("rm", [other]);
+    await run("ln", ["-s", join(checkout, "bin", "dist", "boof-runner.js"), other]);
+    const ours = await fn(`PATH="${bin}:$PATH"; foreign_boof "$1"`, checkout);
+    expect(ours.code).toBe(1);
+  });
+
   it("uses BOOF_RUNNER_DIR before the checkout containing the script", async () => {
     const chosen = join(dir, "chosen-checkout");
     const r = await run("bash", ["-c", 'source "$BOOF_SCRIPT"; source_dir', "fn"], {
