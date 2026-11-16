@@ -226,12 +226,16 @@ export function AddProjectModal({
 export function AddProjectGate({
   onAdded,
   projectsRoot,
+  setupCheck,
 }: {
   onAdded: (project: Project) => void;
   projectsRoot?: string;
+  /** The always-visible setup check widget. */
+  setupCheck?: ReactNode;
 }) {
   return (
-    <div className="flex min-h-screen items-center justify-center p-6">
+    <div className="flex min-h-screen flex-col items-center justify-center gap-4 p-6">
+      {setupCheck && <div className="w-full max-w-[460px]">{setupCheck}</div>}
       <div className="w-full max-w-[460px] rounded-2xl border border-line bg-surface p-10 text-center shadow-md">
         <img
           className="mx-auto mb-4 size-[72px] rounded-full border border-line shadow-sm"

@@ -22,6 +22,7 @@ import { AddProjectGate } from "./components/Projects.js";
 import { AppShell } from "./shell/AppShell.js";
 import { useHarnesses } from "./useHarnesses.js";
 import { DoctorPage } from "./doctor/DoctorPage.js";
+import { SetupCheckWidget } from "./doctor/SetupCheckWidget.js";
 import {
   continueRoute,
   forgetEntry,
@@ -68,16 +69,14 @@ const SettingsScreen = lazy(() =>
 
 export function App() {
   const { route, navigate } = useRoute();
-  // The setup check (doctor) is the first page of every app start; the page the app was opened on
-  // is where Continue goes. Readiness itself is never stored: it is asked for again.
+  // The setup check is a widget on the first page; the full doctor page shows only when boof cannot
+  // work (or when opened). Readiness itself is never stored: it is asked for again.
   const harnesses = useHarnesses();
   const gate = gateOf(harnesses);
   // A reload while the doctor shows lands on /doctor: the remembered page is the entry then.
   const entry = useRef<Route | null>(
     route && route.name !== "doctor" ? route : recallEntry(window.sessionStorage),
   );
-  const [doctorSeen, setDoctorSeen] = useState(false);
-  const [passed, setPassed] = useState(false);
   // useProjects needs `settings` (from useAppData) and useAppData needs the selected id and the
   // projects reload (from useProjects). Break the cycle with a mirrored id and a stable reload.
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -162,15 +161,10 @@ export function App() {
     void refresh().catch(() => {});
   };
 
-  // First page, and the lock: the doctor shows first on every start, and again whenever no agent
-  // is ready (only Settings stays open, to fix things).
-  const mustLand = !passed && !doctorSeen;
+  // The lock: while boof cannot work (no agent ready) only Settings and the doctor stay open.
   const locked = gate === "blocked" && !reachableWhileBlocked(route);
-  const showDoctor = route?.name === "doctor" || mustLand || locked;
+  const showDoctor = route?.name === "doctor" || locked;
   const routeName = route?.name ?? null;
-  useEffect(() => {
-    if (routeName === "doctor") setDoctorSeen(true);
-  }, [routeName]);
   useEffect(() => {
     if (showDoctor && routeName !== "doctor") {
       // Locked mid-session: the page the user was on is where Continue returns to.
@@ -189,7 +183,6 @@ export function App() {
     wasKey.current = key;
   }, [key, gate, refreshHarnesses]);
   const goOn = () => {
-    setPassed(true);
     forgetEntry(window.sessionStorage);
     const to = continueRoute(entry.current, selected?.id ?? null, projectIds);
     navigate(to ?? { name: "inbox" }, { replace: true });
@@ -224,7 +217,11 @@ export function App() {
   // First-run gate: block the app until the first project is added (Settings stays reachable).
   if (settings && projects && projects.length === 0 && route?.name !== "settings") {
     return (
-      <AddProjectGate projectsRoot={settings.projectsRoot} onAdded={(p) => void addProject(p)} />
+      <AddProjectGate
+        projectsRoot={settings.projectsRoot}
+        onAdded={(p) => void addProject(p)}
+        setupCheck={<SetupCheckWidget harnesses={harnesses} pid={null} />}
+      />
     );
   }
 
@@ -248,7 +245,13 @@ export function App() {
         <SandboxNoticeHost onChanged={() => void refresh()} />
         <UpdateNotice />
         {routeReady && route.name === "overview" && (
-          <OverviewPage pid={pid} project={selected} data={data} navigate={navigate} />
+          <OverviewPage
+            pid={pid}
+            project={selected}
+            data={data}
+            navigate={navigate}
+            harnesses={harnesses}
+          />
         )}
         {routeReady && route.name === "tasks" && (
           <>

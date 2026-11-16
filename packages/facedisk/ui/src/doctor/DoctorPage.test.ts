@@ -41,16 +41,16 @@ const html = (h: HarnessesState, pid: string | null = "alpha") =>
   renderToStaticMarkup(createElement(DoctorPage, { harnesses: h, pid, onContinue: () => {} }));
 
 describe("DoctorPage", () => {
-  it("says All set and enables Continue when an agent is ready and every check passes", () => {
+  it("says All set and offers Back to boof when an agent is ready and every check passes", () => {
     const out = html(state({ status: status(true, [check({})]) }));
     expect(out).toContain("All set");
     expect(out).toContain('data-testid="doctor-all-set"');
-    expect(out).not.toMatch(/<button[^>]*disabled=""[^>]*>Continue/);
-    expect(out).toContain(">Continue</button>");
+    expect(out).toContain(">Back to boof</button>");
+    expect(out).not.toContain("Continue");
     expect(out).toContain("Check again");
   });
 
-  it("still lets Continue through on a warning when an agent is ready", () => {
+  it("never blocks on a warning when an agent is ready", () => {
     const out = html(
       state({ status: status(true, [check({ id: "sandbox", status: "warn", message: "Off." })]) }),
     );
@@ -75,10 +75,20 @@ describe("DoctorPage", () => {
     );
     expect(out).toContain('data-testid="doctor-blocked"');
     expect(out).toContain("Not configured.");
-    expect(out).toContain("Configure the better-ccflare gateway in Settings.");
-    expect(out).toContain('href="p/alpha/settings/accounts"');
-    expect(out).toMatch(/<button[^>]*disabled=""[^>]*>Continue/);
+    expect(out).toContain("Configure the better-ccflare gateway in ");
+    expect(out).toMatch(/<a href="p\/alpha\/settings\/accounts"[^>]*>Settings<\/a>/);
+    expect(out).not.toContain("Open Settings");
+    expect(out).not.toContain("Back to boof");
+    expect(out).toContain("Cannot run tasks yet: no coding agent is ready");
     expect(out).toContain("installed, not ready");
+  });
+
+  it("blocks when the server reports git as a hard failure even with an agent ready", () => {
+    const out = html(
+      state({ status: status(true, [check({ id: "git", status: "fail", message: "no git" })]) }),
+    );
+    expect(out).toContain('data-testid="doctor-blocked"');
+    expect(out).not.toContain("Back to boof");
   });
 
   it("links to Settings with a placeholder project before the first project exists", () => {

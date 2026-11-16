@@ -1,16 +1,13 @@
 import { Button } from "../ui/button.js";
 import type { HarnessStatus } from "../api-types.js";
 import type { HarnessesState } from "../useHarnesses.js";
-import { fixRoute, summarize } from "../lib/doctor.js";
-import { formatRoute } from "../lib/route.js";
+import { blockReason, summarize } from "../lib/doctor.js";
+import { CheckRows } from "./CheckRows.js";
 import { HarnessPanel } from "../settings/HarnessPanel.js";
 
-const MARK = { pass: "✓ pass", warn: "! warning", fail: "✗ fail" } as const;
-const TONE = { pass: "text-done", warn: "text-attention", fail: "text-attention" } as const;
-
 /**
- * The first page of the app: what boof needs to run tasks, check by check. No agent ready blocks
- * the rest of the app (App does the redirect); this page only reports and offers the fixes.
+ * The full setup check, check by check. Only "boof cannot work" blocks the rest of the app (App
+ * does the redirect); this page reports and offers the fixes.
  * Nothing here is a secret: install paths, versions and yes/no answers.
  */
 export function DoctorPage({
@@ -34,13 +31,14 @@ export function DoctorPage({
           agent is ready (the Doctor page needs the settings:read scope).
         </p>
         <div>
-          <Button onClick={onContinue}>Continue</Button>
+          <Button onClick={onContinue}>Back to boof</Button>
         </div>
       </Shell>
     );
   }
   const summary = status ? summarize(status.checks) : null;
-  const ready = !!status?.anyReady;
+  const reason = status ? blockReason(status) : null;
+  const ready = !!status && !reason;
   return (
     <Shell>
       {!status && loading && <p className="m-0 text-ink-muted">Checking this computer…</p>}
@@ -57,37 +55,9 @@ export function DoctorPage({
               ? summary && summary.fails === 0 && summary.warns === 0
                 ? "All set"
                 : "All set: an agent is ready"
-              : "Cannot run tasks yet: no coding agent is ready"}
+              : (reason ?? "Cannot run tasks yet")}
           </p>
-          <ul className="m-0 flex list-none flex-col gap-3 p-0">
-            {status.checks.map((c) => {
-              const fix = fixRoute(c.fixPage, pid);
-              return (
-                <li
-                  key={c.id}
-                  data-testid={`check-${c.id}`}
-                  className="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-[length:var(--text-row)]"
-                >
-                  <strong className="text-[length:var(--text-body)]">{c.label}</strong>
-                  <span className={`font-medium ${TONE[c.status]}`}>{MARK[c.status]}</span>
-                  <span className="text-ink-muted">{c.message}</span>
-                  {c.status !== "pass" && (c.fixHint || fix) && (
-                    <span className="basis-full text-[length:var(--text-meta)]">
-                      {c.fixHint}
-                      {fix && (
-                        <>
-                          {c.fixHint ? " " : ""}
-                          <a href={formatRoute(fix)} className="text-accent underline">
-                            Open Settings
-                          </a>
-                        </>
-                      )}
-                    </span>
-                  )}
-                </li>
-              );
-            })}
-          </ul>
+          <CheckRows checks={status.checks} pid={pid} />
           <HarnessPanel
             status={status as HarnessStatus}
             loading={loading}
@@ -98,15 +68,13 @@ export function DoctorPage({
         </>
       )}
       <div className="flex flex-wrap items-center gap-3">
-        <Button disabled={!ready} onClick={onContinue}>
-          Continue
-        </Button>
+        {ready && <Button onClick={onContinue}>Back to boof</Button>}
         <Button variant="outline" disabled={loading} onClick={refresh}>
           Check again
         </Button>
         {!ready && status && (
           <span className="text-[length:var(--text-meta)] text-ink-muted">
-            Continue unlocks when an agent is ready.
+            The rest of boof opens when this is fixed. Settings stays open.
           </span>
         )}
       </div>
