@@ -15089,11 +15089,49 @@
                             },
                             "type": "object"
                           },
+                          "doneToday": {
+                            "maximum": 9007199254740991,
+                            "minimum": -9007199254740991,
+                            "type": "integer"
+                          },
                           "id": {
                             "type": "string"
                           },
+                          "lastActivity": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
                           "paused": {
                             "type": "boolean"
+                          },
+                          "plans": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "activeTitle": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "goalsDone": {
+                                "maximum": 9007199254740991,
+                                "minimum": -9007199254740991,
+                                "type": "integer"
+                              },
+                              "goalsTotal": {
+                                "maximum": 9007199254740991,
+                                "minimum": -9007199254740991,
+                                "type": "integer"
+                              }
+                            },
+                            "required": [
+                              "activeTitle",
+                              "goalsDone",
+                              "goalsTotal"
+                            ],
+                            "type": "object"
                           },
                           "running": {
                             "items": {
@@ -15106,7 +15144,10 @@
                           "id",
                           "paused",
                           "running",
-                          "counts"
+                          "counts",
+                          "plans",
+                          "lastActivity",
+                          "doneToday"
                         ],
                         "type": "object"
                       },

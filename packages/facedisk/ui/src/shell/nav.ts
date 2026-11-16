@@ -1,10 +1,11 @@
 import type { Route } from "../lib/route.js";
 
-export type NavKey = "overview" | "tasks" | "plans" | "settings" | "inbox";
+export type NavKey = "home" | "overview" | "tasks" | "plans" | "settings" | "inbox";
 
 /** Which nav item a route belongs to (a task editor sits under Tasks). */
 export function navKey(route: Route | null): NavKey | null {
   if (!route || route.name === "doctor") return null;
+  if (route.name === "home") return "home";
   if (route.name === "task") return "tasks";
   return route.name === "wizard" ? "plans" : route.name;
 }

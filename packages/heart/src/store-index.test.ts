@@ -38,6 +38,17 @@ afterEach(async () => {
 });
 
 describe("TaskStore status index", () => {
+  it("reports when the folders last changed and how many tasks finished since a time", async () => {
+    expect(await store.activity(0)).toMatchObject({ doneSince: 0 });
+    await store.create(newTask(fm({ id: "t2", status: "done" })));
+    const before = Date.now() - 60_000;
+    const after = Date.now() + 60_000;
+    const seen = await store.activity(before);
+    expect(seen.doneSince).toBe(1);
+    expect(seen.lastActivityMs).toBeGreaterThan(before);
+    expect((await store.activity(after)).doneSince).toBe(0);
+  });
+
   it("counts by directory and names the running tasks, without reading the files", async () => {
     await store.create(newTask(fm()));
     await store.create(newTask(fm({ id: "t2", status: "done" })));

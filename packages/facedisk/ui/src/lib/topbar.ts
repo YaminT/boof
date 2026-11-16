@@ -11,7 +11,17 @@ export interface RunnerOverview {
     usageExhausted?: number | null;
     nextAvailableAt?: string | null;
   } | null;
-  projects: { id: string; paused: boolean; running: string[]; counts: Record<string, number> }[];
+  projects: {
+    id: string;
+    paused: boolean;
+    running: string[];
+    counts: Record<string, number>;
+    /** The newest active plan; absent from an older server. */
+    plans?: { activeTitle: string | null; goalsDone: number; goalsTotal: number };
+    /** When the task folders last changed (ISO), and tasks finished since local midnight. */
+    lastActivity?: string | null;
+    doneToday?: number;
+  }[];
 }
 
 /** One running task, ready to show. */

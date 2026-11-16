@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
-import { cn } from "@/lib/utils";
+import { cn } from "../lib/utils.js";
 import { boofRunnerLogoUrl } from "../assets.js";
+import { formatRoute } from "../lib/route.js";
 import type { NavCounts, NavKey } from "./nav.js";
 
 export function NavItem({
@@ -45,6 +46,24 @@ export function NavItem({
   );
 }
 
+/** The logo and wordmark: a real link to Home, from every page. */
+export function HomeLink({ className }: { className?: string }) {
+  return (
+    <a
+      href={formatRoute({ name: "home" })}
+      aria-label="Boof home"
+      title="Boof home"
+      className={cn(
+        "focus-ring flex items-center gap-2 rounded-lg text-ink no-underline hover:text-ink",
+        className,
+      )}
+    >
+      <img src={boofRunnerLogoUrl} alt="" className="size-6 rounded-full" />
+      <span className="text-[length:var(--text-body)] font-semibold">Boof Runner</span>
+    </a>
+  );
+}
+
 /** Left rail for wide screens: project menu, navigation and theme. */
 export function Rail({
   active,
@@ -61,12 +80,10 @@ export function Rail({
 }) {
   return (
     <aside className="sticky top-0 hidden h-screen w-[232px] shrink-0 flex-col gap-4 border-r border-line bg-surface p-3 min-[720px]:flex">
-      <div className="flex items-center gap-2 px-2 pt-1">
-        <img src={boofRunnerLogoUrl} alt="" className="size-6 rounded-full" />
-        <span className="text-[length:var(--text-body)] font-semibold text-ink">Boof Runner</span>
-      </div>
+      <HomeLink className="px-2 pt-1" />
       {projectMenu}
       <nav aria-label="Main" className="flex flex-col gap-0.5">
+        <NavItem label="Home" active={active === "home"} onClick={() => go("home")} />
         <NavItem label="Overview" active={active === "overview"} onClick={() => go("overview")} />
         <NavItem
           label="Tasks"
