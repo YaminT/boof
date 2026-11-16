@@ -1,7 +1,23 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  Bell,
+  ChevronDown,
+  ChevronUp,
+  Circle,
+  CircleCheck,
+  Clock,
+  Eye,
+  Hammer,
+  Pause,
+  PencilRuler,
+  Play,
+  Square,
+  TriangleAlert,
+  Wrench,
+  X,
+  type LucideIcon,
+} from "lucide-react";
 import type { Project } from "@boof/heart/schema";
-import { cn } from "@/lib/utils";
-import { Button } from "@/ui/button";
 import { api, type TaskView } from "../api.js";
 import type { AppData } from "../useAppData.js";
 import { act, errorMessage } from "../lib/act.js";
@@ -20,22 +36,81 @@ import {
   stopSummary,
   topbarState,
   type RunningItem,
+  type TopbarState,
+  type TopbarTone,
 } from "../lib/topbar.js";
+import {
+  EMPTY_FINISHED,
+  FINISHED_TTL_MS,
+  stepFinished,
+  withFinished,
+  type FinishedMemory,
+} from "../lib/finished.js";
 import { StopTaskDialog } from "./StopTaskDialog.js";
 import { toast } from "sonner";
 
 /** Titles of tasks in projects other than the selected one, fetched once per id. */
 const otherTitles = new Map<string, TaskView | null>();
 
-const KIND_STYLE = {
-  running: "border-transparent bg-done text-white dark:text-page",
-  draining: "border-attention/40 bg-attention/15 text-ink",
-  idle: "border-line bg-surface text-ink",
-  waiting: "border-attention/40 bg-attention/15 text-ink",
-  paused: "border-line bg-surface text-ink-muted",
-  blocked: "border-attention/40 bg-attention/15 text-ink",
-  unknown: "border-line bg-surface text-ink-muted",
-} as const;
+const TONE_ICON: Record<TopbarTone, LucideIcon> = {
+  idle: Circle,
+  paused: Pause,
+  planning: PencilRuler,
+  working: Hammer,
+  reviewing: Eye,
+  finished: CircleCheck,
+  blocked: TriangleAlert,
+  waiting: Clock,
+};
+
+/** Tasks done of the active plan of the first running task (the selected project's), if any. */
+function planProgress(data: AppData, state: TopbarState): { done: number; total: number } | null {
+  const first = state.running[0];
+  const task = first ? data.tasks.find((t) => t.frontmatter.id === first.taskId) : undefined;
+  const plan = data.plans.find((p) => p.id === task?.frontmatter.planRef?.planId);
+  return plan && plan.goalCount > 0 ? { done: plan.doneCount, total: plan.goalCount } : null;
+}
+
+/** The state word (bold) and the rest of the text, with its separator ("· x", ": x" or " x"). */
+function splitStateWord(text: string): [string, string] {
+  const m = /^(.+?)( · |: )(.*)$/.exec(text);
+  if (m) return [m[1], m[2] === ": " ? `: ${m[3]}` : ` · ${m[3]}`];
+  const i = text.indexOf(" ");
+  return i < 0 ? [text, ""] : [text.slice(0, i), text.slice(i)];
+}
+
+/** A bar control: an icon with an accessible name and a tooltip (the title). */
+function IconBtn({
+  label,
+  title,
+  disabled,
+  expanded,
+  onClick,
+  children,
+}: {
+  label: string;
+  title: string;
+  disabled?: boolean;
+  expanded?: boolean;
+  onClick: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      className="topbar-btn"
+      aria-label={label}
+      title={title}
+      disabled={disabled}
+      {...(expanded !== undefined ? { "aria-expanded": expanded } : {})}
+      onClick={onClick}
+    >
+      <span aria-hidden className="contents">
+        {children}
+      </span>
+    </button>
+  );
+}
 
 /** One bar above every screen: what the runner does, and Pause, Start and Stop. */
 export function TopBar({
@@ -195,6 +270,29 @@ export function TopBar({
   });
   const nextRoute = next && pid ? { name: next.to, pid } : null;
 
+  // The last completion: kept for 10 minutes, until dismissed, or until new work starts.
+  const [finished, setFinished] = useState<FinishedMemory>(EMPTY_FINISHED);
+  const runningKey = state.running.map((r) => `${r.pid}/${r.taskId}`).join("\n");
+  useEffect(() => {
+    // The first overview is not a finish, and a missing overview says nothing about the queue.
+    if (!overview || denied) return;
+    setFinished((m) =>
+      stepFinished(m, {
+        kind: state.kind,
+        running: runningKey ? runningKey.split("\n") : [],
+        queued,
+        now: Date.now(),
+      }),
+    );
+  }, [overview, denied, state.kind, runningKey, queued]);
+  const finishedAt = finished.finished?.at;
+  useEffect(() => {
+    if (finishedAt === undefined) return;
+    const left = Math.max(0, finishedAt + FINISHED_TTL_MS - Date.now());
+    const t = setTimeout(() => setFinished((m) => ({ ...m, finished: null })), left);
+    return () => clearTimeout(t);
+  }, [finishedAt]);
+
   // The profile chip: the project's own profile when set (changed in Project settings), else the
   // global active one, which the chip switches.
   const profiles = data.settings?.profiles ?? [];
@@ -216,34 +314,45 @@ export function TopBar({
     prev.current = state.kind;
   }, [state.kind, state.running.length]);
 
+  const now = Date.now();
+  const shownState = withFinished(state, finished, now);
+  const tone = shownState.tone;
+  const [stateWord, rest] = splitStateWord(shownState.text);
+  const Icon = TONE_ICON[tone];
+  const progress = planProgress(data, state);
+  const working = tone === "planning" || tone === "working" || tone === "reviewing";
+
   return (
     <section
       role="region"
       aria-label="Runner"
-      className={cn(
-        "sticky top-0 z-20 -mx-4 border-b px-4 py-1.5 min-[720px]:-mx-8 min-[720px]:px-8",
-        KIND_STYLE[state.kind],
-      )}
+      data-tone={tone}
+      className="topbar sticky top-0 z-20 -mx-4 px-4 min-[720px]:-mx-8 min-[720px]:px-8"
     >
-      <div className="mx-auto flex w-full max-w-[1320px] items-center gap-2 text-[length:var(--text-row)]">
-        <span aria-live="polite" title={state.text} className="min-w-0 flex-1 truncate font-medium">
-          {state.text}
-          {stale && <span className="font-normal"> · status may be stale</span>}
+      <div className="mx-auto flex h-12 w-full max-w-[1320px] items-center gap-2 text-[length:var(--text-row)]">
+        <span
+          aria-live="polite"
+          title={shownState.text}
+          className="flex min-w-0 flex-1 items-center gap-2"
+        >
+          {tone === "idle" ? (
+            <span aria-hidden className="topbar-dot size-2.5 shrink-0 rounded-full" />
+          ) : (
+            <Icon aria-hidden className="size-4 shrink-0" style={{ color: "var(--tb-dot)" }} />
+          )}
+          <span className="min-w-0 truncate">
+            <span className="font-semibold">{stateWord}</span>
+            {rest}
+            {stale && <span> · status may be stale</span>}
+          </span>
         </span>
-        {state.running.length > 1 && (
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            className="h-8 min-w-8 text-ink"
-            aria-expanded={open}
-            onClick={() => setOpen((o) => !o)}
-          >
-            {open ? "Hide" : "Details"}
-          </Button>
+        {working && progress && (
+          <span className="hidden shrink-0 text-[length:var(--text-meta)] min-[720px]:inline">
+            {progress.done} of {progress.total} tasks
+          </span>
         )}
         {nextRoute && next && (
-          <span className="hidden shrink-0 items-center gap-1 min-[720px]:flex">
+          <span className="hidden shrink-0 items-center gap-1 min-[900px]:flex">
             <span>{next.text}.</span>
             <a
               href={formatRoute(nextRoute as Parameters<typeof formatRoute>[0])}
@@ -253,10 +362,20 @@ export function TopBar({
             </a>
           </span>
         )}
+        {state.running.length > 1 && (
+          <IconBtn
+            label={open ? "Hide details" : "Details"}
+            title={open ? "Hide the running tasks" : "Show the running tasks"}
+            expanded={open}
+            onClick={() => setOpen((o) => !o)}
+          >
+            {open ? <ChevronUp className="size-4" /> : <ChevronDown className="size-4" />}
+          </IconBtn>
+        )}
         {profiles.length > 0 &&
           (ownId || !canSwitch ? (
             <span
-              className="shrink-0 rounded-full border border-line px-2 py-0.5 text-[length:var(--text-meta)]"
+              className="hidden shrink-0 rounded-full border border-current/30 px-2 py-0.5 text-[length:var(--text-meta)] min-[720px]:inline"
               title={ownId ? "Set for this project (Settings › Project)" : "Active profile"}
             >
               Profile:{" "}
@@ -267,7 +386,7 @@ export function TopBar({
             <select
               aria-label="Active profile"
               title="Profile for tasks that start next"
-              className="h-8 max-w-40 shrink-0 rounded-full border border-line bg-surface px-2 text-[length:var(--text-meta)] text-ink"
+              className="h-8 w-24 shrink-0 rounded-full border border-current/30 bg-transparent px-2 text-[length:var(--text-meta)] text-inherit min-[720px]:w-auto min-[720px]:max-w-40 [&>option]:bg-surface [&>option]:text-ink"
               value={activeId ?? ""}
               onChange={(e) => void switchProfile(e.target.value)}
             >
@@ -282,50 +401,71 @@ export function TopBar({
         {harnesses.status !== null && !harnesses.status.anyReady && (
           <a
             href={formatRoute({ name: "doctor" })}
-            className="shrink-0 font-medium text-inherit underline"
+            className="topbar-btn"
+            aria-label="Fix: set up a coding agent"
+            title="Fix: set up a coding agent"
           >
-            Fix
+            <Wrench aria-hidden className="size-4" />
           </a>
         )}
         {needsYou > 0 && (
           <a
             href={formatRoute({ name: "inbox" })}
-            className="shrink-0 font-medium text-inherit underline"
+            className="topbar-btn relative"
+            aria-label={`Needs you: ${needsYou}`}
+            title={`Needs you: ${needsYou} to look at`}
           >
-            Needs you: {needsYou}
+            <Bell aria-hidden className="size-4" />
+            <span
+              aria-hidden
+              className="absolute -top-1.5 -right-1.5 flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[10px] leading-none font-semibold"
+              style={{ background: "var(--tb-fg)", color: "var(--tb-bg)" }}
+            >
+              {needsYou > 99 ? "99+" : needsYou}
+            </span>
           </a>
         )}
         {state.toggle && (
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            className="h-8 min-w-8 text-ink"
-            disabled={state.toggle.disabled}
+          <IconBtn
+            label={
+              state.toggle.reason
+                ? `${state.toggle.label}: ${state.toggle.reason}`
+                : state.toggle.label
+            }
             title={
-              state.toggle.reason ??
-              (state.toggle.label === "Pause"
-                ? "Start nothing new; running tasks finish"
-                : "Start the runner")
+              state.toggle.reason
+                ? `${state.toggle.label}: ${state.toggle.reason}`
+                : state.toggle.label === "Pause"
+                  ? "Pause: start nothing new; running tasks finish"
+                  : "Start the runner"
             }
-            aria-label={
-              state.toggle.reason ? `Start (disabled: ${state.toggle.reason})` : state.toggle.label
-            }
+            disabled={state.toggle.disabled}
             onClick={() => void toggle()}
           >
-            {state.toggle.label}
-          </Button>
+            {state.toggle.label === "Pause" ? (
+              <Pause className="size-4" />
+            ) : (
+              <Play className="size-4" />
+            )}
+          </IconBtn>
         )}
         {state.stop && (
-          <Button
-            type="button"
-            variant="destructive"
-            size="sm"
-            className="h-8 min-w-8"
+          <IconBtn
+            label="Stop"
+            title="Stop: stop the running tasks and pause the runner"
             onClick={() => setConfirming(true)}
           >
-            Stop
-          </Button>
+            <Square className="size-4" />
+          </IconBtn>
+        )}
+        {tone === "finished" && (
+          <IconBtn
+            label="Dismiss"
+            title="Dismiss: hide the finished message"
+            onClick={() => setFinished((m) => ({ ...m, finished: null }))}
+          >
+            <X className="size-4" />
+          </IconBtn>
         )}
       </div>
       {shown && (
@@ -345,6 +485,13 @@ export function TopBar({
         description={stopSummary(state.running)}
         confirmLabel="Stop and pause"
       />
+      {working && progress && (
+        <span
+          aria-hidden
+          className="topbar-progress"
+          style={{ width: `${Math.round((progress.done / progress.total) * 100)}%` }}
+        />
+      )}
     </section>
   );
 }

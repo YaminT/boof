@@ -26,8 +26,37 @@ export interface RunningItem {
 export type TopbarKind =
   "running" | "draining" | "idle" | "waiting" | "paused" | "blocked" | "unknown";
 
+/** The look of the bar: one background tint per tone (see `--tb-*` in index.css). */
+export type TopbarTone =
+  "idle" | "paused" | "planning" | "working" | "reviewing" | "finished" | "blocked" | "waiting";
+
+export const TOPBAR_TONES: readonly TopbarTone[] = [
+  "idle",
+  "paused",
+  "planning",
+  "working",
+  "reviewing",
+  "finished",
+  "blocked",
+  "waiting",
+];
+
+/**
+ * What the running step is doing, from its log header (`Planner`, `Planner (refinement)`,
+ * `Developer (fix round 1, ...)`, `Reviewer (round 2)`, `Observer`). Unknown steps count as work.
+ */
+export function phaseOfStep(step: string | null | undefined): "planning" | "working" | "reviewing" {
+  const word = (step ?? "").trim().toLowerCase();
+  if (word.startsWith("planner") || word.startsWith("plan")) return "planning";
+  if (word.startsWith("reviewer") || word.startsWith("observer")) return "reviewing";
+  return "working";
+}
+
+const PHASE_WORD = { planning: "Planning", working: "Working", reviewing: "Reviewing" } as const;
+
 export interface TopbarState {
   kind: TopbarKind;
+  tone: TopbarTone;
   /** The state word is always the first word, so colour is never the only signal. */
   text: string;
   /** Show Pause (runner on) or Start (runner paused or blocked); null hides the button. */
@@ -113,6 +142,7 @@ export function topbarState(input: TopbarInput): TopbarState {
     const running = input.fallbackRunning;
     return {
       kind: running.length > 0 ? "running" : "unknown",
+      tone: running.length > 0 ? phaseOfStep(input.step) : "idle",
       text: runningText(running, input.step),
       toggle: null,
       stop: running.length > 0 && canStop,
@@ -137,6 +167,7 @@ export function topbarState(input: TopbarInput): TopbarState {
       const one = running.length === 1 ? itemLabel(running[0]) : `${running.length} tasks`;
       return {
         kind: "draining",
+        tone: "paused",
         text: `Paused · finishing ${one}`,
         toggle: toggle("Start"),
         stop,
@@ -145,6 +176,7 @@ export function topbarState(input: TopbarInput): TopbarState {
     }
     return {
       kind: "paused",
+      tone: "paused",
       text: `Paused · ${queued} queued`,
       toggle: toggle("Start", input.noHarness ? "no agent ready" : undefined),
       stop: false,
@@ -155,6 +187,7 @@ export function topbarState(input: TopbarInput): TopbarState {
     const at = formatResumeTime(input.resetAt ?? poolResetAt(overview), input.timeZone);
     return {
       kind: "waiting",
+      tone: "waiting",
       text: `Waiting for usage-limit reset${at ? `, resumes at ${at}` : ""}`,
       toggle: toggle("Pause"),
       stop: false,
@@ -165,6 +198,7 @@ export function topbarState(input: TopbarInput): TopbarState {
   if (reason && running.length === 0) {
     return {
       kind: "blocked",
+      tone: "blocked",
       text: `Cannot run: ${reason}`,
       toggle: toggle("Start", reason),
       stop: false,
@@ -174,6 +208,7 @@ export function topbarState(input: TopbarInput): TopbarState {
   if (running.length > 0) {
     return {
       kind: "running",
+      tone: phaseOfStep(input.step),
       text: runningText(running, input.step),
       toggle: toggle("Pause"),
       stop,
@@ -182,7 +217,8 @@ export function topbarState(input: TopbarInput): TopbarState {
   }
   return {
     kind: "idle",
-    text: `Runner on · waiting · ${queued} queued`,
+    tone: "idle",
+    text: `Idle · ${queued} queued`,
     toggle: toggle("Pause"),
     stop: false,
     running,
@@ -197,9 +233,10 @@ function blockedReason(o: RunnerOverview, noHarness: boolean): string | null {
 
 function runningText(running: RunningItem[], step?: string | null): string {
   if (running.length === 0) return "Runner status unavailable";
-  if (running.length > 1) return `Running ${running.length} tasks`;
+  const word = PHASE_WORD[phaseOfStep(step)];
+  if (running.length > 1) return `${word} · ${running.length} tasks`;
   const [one] = running;
-  return `Running · ${itemLabel(one)}${step ? ` · ${step}` : ""}`;
+  return `${word} · ${itemLabel(one)}${step ? ` · ${step}` : ""}`;
 }
 
 export interface StopAllResult {

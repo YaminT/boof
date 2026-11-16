@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  phaseOfStep,
   contrast,
   formatResumeTime,
   nextStep,
@@ -44,14 +45,14 @@ describe("topbarState", () => {
       }),
     );
     expect(s.kind).toBe("running");
-    expect(s.text).toBe("Running · Launch › Build it · Developer");
+    expect(s.text).toBe("Working · Launch › Build it · Developer");
     expect(s.toggle).toEqual({ label: "Pause", disabled: false });
     expect(s.stop).toBe(true);
   });
 
   it("running without a plan omits the plan part", () => {
     const s = topbarState(input({ overview: runningOv(), items: new Map([["p1/t1", item()]]) }));
-    expect(s.text).toBe("Running · Build it");
+    expect(s.text).toBe("Working · Build it");
   });
 
   it("several tasks, also in another project", () => {
@@ -62,7 +63,7 @@ describe("topbarState", () => {
       ],
     });
     const s = topbarState(input({ overview: o }));
-    expect(s.text).toBe("Running 3 tasks");
+    expect(s.text).toBe("Working · 3 tasks");
     expect(s.running.map((r) => r.pid)).toEqual(["p1", "p2", "p2"]);
   });
 
@@ -88,7 +89,7 @@ describe("topbarState", () => {
   it("idle counts queued tasks", () => {
     const s = topbarState(input());
     expect(s.kind).toBe("idle");
-    expect(s.text).toBe("Runner on · waiting · 2 queued");
+    expect(s.text).toBe("Idle · 2 queued");
     expect(s.stop).toBe(false);
   });
 
@@ -306,5 +307,42 @@ describe("queued count with local pending tasks", () => {
       localPending: { a: 1 },
     });
     expect(state.text).toBe("Paused · 1 queued");
+  });
+});
+
+describe("tones", () => {
+  it("reads the phase from the running step", () => {
+    expect(phaseOfStep("Planner")).toBe("planning");
+    expect(phaseOfStep("Planner (refinement)")).toBe("planning");
+    expect(phaseOfStep("Planner (task list)")).toBe("planning");
+    expect(phaseOfStep("Developer")).toBe("working");
+    expect(phaseOfStep("Developer (fix round 1, reviewer)")).toBe("working");
+    expect(phaseOfStep("Reviewer (round 2)")).toBe("reviewing");
+    expect(phaseOfStep("Observer")).toBe("reviewing");
+    expect(phaseOfStep(null)).toBe("working");
+  });
+
+  it("tints each state and puts the state word first", () => {
+    const run = (step: string | null) =>
+      topbarState(
+        input({
+          overview: runningOv(),
+          items: new Map([["p1/t1", item()]]),
+          step,
+        }),
+      );
+    expect(run("Planner")).toMatchObject({ tone: "planning" });
+    expect(run("Planner").text.startsWith("Planning · ")).toBe(true);
+    expect(run("Developer")).toMatchObject({ tone: "working" });
+    expect(run("Observer").text.startsWith("Reviewing · ")).toBe(true);
+    expect(topbarState(input()).tone).toBe("idle");
+    expect(topbarState(input({ overview: ov({ enabled: false }) })).tone).toBe("paused");
+    expect(topbarState(input({ overview: runningOv(false) })).tone).toBe("paused");
+    expect(topbarState(input({ noHarness: true })).tone).toBe("blocked");
+    expect(
+      topbarState(
+        input({ overview: ov({ budgetExceeded: [{}] }), resetAt: "2026-11-12T00:07:00Z" }),
+      ).tone,
+    ).toBe("waiting");
   });
 });
