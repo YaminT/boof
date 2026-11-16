@@ -376,6 +376,15 @@ export const runnerOverview = defineOp({
         paused: z.boolean(),
         running: z.array(z.string()),
         counts: z.record(z.string(), z.number().int()),
+        /** The newest active plan: its title and how many of its goals are done. */
+        plans: z.object({
+          activeTitle: z.string().nullable(),
+          goalsDone: z.number().int(),
+          goalsTotal: z.number().int(),
+        }),
+        /** When the task folders last changed (ISO), and tasks finished since local midnight. */
+        lastActivity: z.string().nullable(),
+        doneToday: z.number().int(),
       }),
     ),
   }),
@@ -400,8 +409,33 @@ export const runnerOverview = defineOp({
         const listed = (await ctx.services.listProjects()).filter((p) => allowed(p.id));
         return Promise.all(
           listed.map(async (p) => {
-            const { counts, running } = await ctx.services.forProject(p.id).statusSummary();
-            return { id: p.id, paused: p.paused, running, counts };
+            const svc = ctx.services.forProject(p.id);
+            const midnight = new Date();
+            midnight.setHours(0, 0, 0, 0);
+            const [{ counts, running }, plans, activity] = await Promise.all([
+              svc.statusSummary(),
+              svc.plans.list().catch(() => []),
+              svc.activity(midnight.getTime()).catch(() => null),
+            ]);
+            const active = plans
+              .filter((pl) => pl.status === "active")
+              .sort((a, b) => b.updated.localeCompare(a.updated))[0];
+            return {
+              id: p.id,
+              paused: p.paused,
+              running,
+              counts,
+              plans: {
+                activeTitle: active?.title ?? null,
+                goalsDone: active?.doneCount ?? 0,
+                goalsTotal: active?.goalCount ?? 0,
+              },
+              lastActivity:
+                activity?.lastActivityMs != null
+                  ? new Date(activity.lastActivityMs).toISOString()
+                  : null,
+              doneToday: activity?.doneSince ?? 0,
+            };
           }),
         );
       })(),

@@ -5,7 +5,7 @@ import { formatRoute } from "../lib/route.js";
 const MARK = { pass: "✓ pass", warn: "! warning", fail: "✗ fail" } as const;
 const TONE = { pass: "text-done", warn: "text-attention", fail: "text-attention" } as const;
 export const LINK =
-  "rounded-sm text-accent underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent";
+  "rounded-sm text-accent-brand underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-brand";
 
 /** The setup checks, one row each. Every mention of a page or setting in a hint is a real link. */
 export function CheckRows({ checks, pid }: { checks: readonly DoctorCheck[]; pid: string | null }) {

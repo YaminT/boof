@@ -37,6 +37,7 @@ import {
   nextPrevious,
   routeForProject,
   routeKey,
+  hasPid,
   routePid,
   type Route,
 } from "./lib/route.js";
@@ -52,6 +53,7 @@ const TaskDetailPage = lazy(() =>
 const InboxPage = lazy(() =>
   import("./inbox/InboxPage.js").then((m) => ({ default: m.InboxPage })),
 );
+const HomePage = lazy(() => import("./home/HomePage.js").then((m) => ({ default: m.HomePage })));
 const OverviewPage = lazy(() =>
   import("./overview/OverviewPage.js").then((m) => ({ default: m.OverviewPage })),
 );
@@ -117,11 +119,7 @@ export function App() {
   // one once the projects have loaded; the replace keeps Back from returning to it.
   const projectIds = useMemo(() => projects?.map((p) => p.id) ?? null, [projects]);
   const routeUnknownProject =
-    !!route &&
-    route.name !== "inbox" &&
-    route.name !== "doctor" &&
-    !!projects &&
-    !projects.some((p) => p.id === route.pid);
+    !!route && hasPid(route) && !!projects && !projects.some((p) => p.id === route.pid);
   useEffect(() => {
     const fix = correctedRoute(route, projectIds, currentId);
     if (fix) navigate(fix, { replace: true });
@@ -226,7 +224,7 @@ export function App() {
   }
 
   // Screens follow the route's project; render them only once the data hook has caught up to it.
-  const pid = route && route.name !== "inbox" ? route.pid : null;
+  const pid = route && hasPid(route) ? route.pid : null;
   const routeReady = !!pid && pid === selectedId && !!route && !routeUnknownProject;
 
   return (
@@ -244,6 +242,14 @@ export function App() {
         {budget && <BudgetBanner budget={budget} />}
         <SandboxNoticeHost onChanged={() => void refresh()} />
         <UpdateNotice />
+        {route?.name === "home" && (
+          <HomePage
+            projects={projects}
+            selectedId={selected?.id ?? null}
+            harnesses={harnesses}
+            reloadProjects={reload}
+          />
+        )}
         {routeReady && route.name === "overview" && (
           <OverviewPage
             pid={pid}

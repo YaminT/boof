@@ -6,11 +6,11 @@ export function basePath(baseURI: string): string {
   return p.endsWith("/") ? p : p + "/";
 }
 
-/** The route for a pathname under `base`; null for the bare mount point, index.html or elsewhere. */
+/** The route for a pathname under `base` (Home for the bare mount point or index.html); null elsewhere. */
 export function routeFromLocation(pathname: string, base: string): Route | null {
   if (!pathname.startsWith(base)) return null;
   const rest = pathname.slice(base.length);
-  if (rest === "" || rest === "index.html") return null;
+  if (rest === "" || rest === "index.html") return { name: "home" };
   return parseRoute(rest);
 }
 
@@ -37,7 +37,8 @@ export function appPathOf(href: string, baseURI: string): string | null {
   if (!url.pathname.startsWith(prefix)) return null;
   const rest = url.pathname.slice(prefix.length);
   if (!parseRoute(rest)) return null;
-  return rest + url.search;
+  // The bare mount point is "./": an empty path would mean the current page.
+  return (rest || "./") + url.search;
 }
 
 /** pathname and query of an app-relative path, as the browser will show them. */

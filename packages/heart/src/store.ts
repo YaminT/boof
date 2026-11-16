@@ -634,6 +634,31 @@ export class TaskStore {
     return [...hit.byName.values()].map((entry) => cloneTask(entry.task));
   }
 
+  /**
+   * When the task folders last changed (a task moved in or out) and how many tasks finished since
+   * `sinceMs`. Directory mtimes only: the done folder is listed just when it changed since then.
+   */
+  async activity(sinceMs: number): Promise<{ lastActivityMs: number | null; doneSince: number }> {
+    let last = 0n;
+    for (const status of ALL_STATUSES) {
+      const m = await this.statusDirMtime(status);
+      if (m > last) last = m;
+    }
+    let doneSince = 0;
+    const doneMtimeMs = Number((await this.statusDirMtime("done")) / 1_000_000n);
+    if (doneMtimeMs >= sinceMs) {
+      const dir = statusDir(this.root, "done");
+      for (const name of await listMdFiles(dir)) {
+        try {
+          if ((await stat(join(dir, name))).mtimeMs >= sinceMs) doneSince++;
+        } catch (err) {
+          if (!isNotFound(err)) throw err;
+        }
+      }
+    }
+    return { lastActivityMs: last === 0n ? null : Number(last / 1_000_000n), doneSince };
+  }
+
   private async statusDirMtime(status: Status): Promise<bigint> {
     try {
       return (await stat(statusDir(this.root, status), { bigint: true })).mtimeNs;

@@ -1,5 +1,5 @@
 import type { DoctorCheck, DoctorFixPage, HarnessStatus } from "../api-types.js";
-import { formatRoute, parseRoute, type Route, type SettingsPageId } from "./route.js";
+import { formatRoute, hasPid, parseRoute, type Route, type SettingsPageId } from "./route.js";
 
 /**
  * What the readiness gate says:
@@ -129,7 +129,7 @@ export function continueRoute(
   knownPids: readonly string[] | null,
 ): Route | null {
   if (entry && entry.name !== "doctor") {
-    if (entry.name === "inbox" || !knownPids || knownPids.includes(entry.pid)) return entry;
+    if (!hasPid(entry) || !knownPids || knownPids.includes(entry.pid)) return entry;
   }
   return selectedPid ? { name: "overview", pid: selectedPid } : null;
 }

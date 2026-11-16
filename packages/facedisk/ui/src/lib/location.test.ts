@@ -18,8 +18,8 @@ describe("basePath", () => {
 describe("routeFromLocation", () => {
   it("reads the route under the base", () => {
     expect(routeFromLocation("/boof/p/x/tasks", "/boof/")).toEqual({ name: "tasks", pid: "x" });
-    expect(routeFromLocation("/boof/", "/boof/")).toBeNull();
-    expect(routeFromLocation("/boof/index.html", "/boof/")).toBeNull();
+    expect(routeFromLocation("/boof/", "/boof/")).toEqual({ name: "home" });
+    expect(routeFromLocation("/boof/index.html", "/boof/")).toEqual({ name: "home" });
     expect(routeFromLocation("/other/p/x", "/boof/")).toBeNull();
     expect(routeFromLocation("/p/x", "/")).toEqual({ name: "overview", pid: "x" });
   });
@@ -50,6 +50,8 @@ describe("appPathOf", () => {
   const base = "https://h/boof/";
   it("returns the path for in-app route links", () => {
     expect(appPathOf("https://h/boof/p/x/tasks", base)).toBe("p/x/tasks");
+    expect(appPathOf("https://h/boof/", base)).toBe("./");
+    expect(appPathOf("https://h/boof/?x=1", base)).toBe("./?x=1");
     expect(appPathOf("https://h/boof/p/x/tasks/a%2Fb", base)).toBe("p/x/tasks/a%2Fb");
   });
   it("leaves everything else to the browser", () => {

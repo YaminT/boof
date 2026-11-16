@@ -85,8 +85,15 @@ describe("parseRoute", () => {
     expect(parseRoute("inbox")).toEqual({ name: "inbox" });
   });
 
-  it("returns null for empty, unknown and hash input", () => {
-    for (const h of ["", "/", "elsewhere", "#/p/boof"]) expect(parseRoute(h)).toBeNull();
+  it("parses the bare path as Home and formats it back", () => {
+    for (const h of ["", "/"]) expect(parseRoute(h)).toEqual({ name: "home" });
+    expect(formatRoute({ name: "home" })).toBe("./");
+    expect(routePid({ name: "home" })).toBeNull();
+    expect(correctedRoute({ name: "home" }, ["a"], "a")).toBeNull();
+  });
+
+  it("returns null for unknown and hash input", () => {
+    for (const h of ["elsewhere", "#/p/boof"]) expect(parseRoute(h)).toBeNull();
   });
 
   it("rejects over-long paths, empty and dot segments", () => {

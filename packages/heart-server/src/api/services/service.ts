@@ -188,6 +188,11 @@ export class ProjectService {
     return this.tasks.list();
   }
 
+  /** When the task folders last changed, and how many tasks finished since `sinceMs`. */
+  activity(sinceMs: number) {
+    return this.tasks.activity(sinceMs);
+  }
+
   /** Status counts and the running ids. Does not read task bodies. */
   statusSummary() {
     return this.tasks.statusSummary();

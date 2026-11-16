@@ -54,6 +54,7 @@ describe("createCommandActions", () => {
     expect(ids(ctx())).toEqual([
       "go-inbox",
       "go-doctor",
+      "go-home",
       "go-overview",
       "go-tasks",
       "go-plans",
@@ -88,6 +89,7 @@ describe("createCommandActions", () => {
     expect(none).toEqual([
       "go-inbox",
       "go-doctor",
+      "go-home",
       "switch-project-alpha",
       "switch-project-beta",
       "toggle-runner",

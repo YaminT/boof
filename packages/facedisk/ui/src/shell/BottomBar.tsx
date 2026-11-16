@@ -19,6 +19,7 @@ export function BottomBar({
 }) {
   const [open, setOpen] = useState(false);
   const tabs: { key: NavKey; label: string }[] = [
+    { key: "home", label: "Home" },
     { key: "overview", label: "Overview" },
     { key: "tasks", label: "Tasks" },
     { key: "plans", label: "Plans" },

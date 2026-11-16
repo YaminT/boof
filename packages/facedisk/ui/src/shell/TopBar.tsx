@@ -7,7 +7,7 @@ import type { AppData } from "../useAppData.js";
 import { act, errorMessage } from "../lib/act.js";
 import { formatRoute } from "../lib/route.js";
 import { useHeldScopes } from "../lib/useHeldScopes.js";
-import { useRunnerOverview } from "../lib/useRunnerOverview.js";
+import type { RunnerOverviewState } from "../lib/runner-overview-context.js";
 import { setRunner } from "../lib/runner-toggle.js";
 import type { HarnessesState } from "../useHarnesses.js";
 import { useRunningStep } from "../lib/useRunningStep.js";
@@ -39,12 +39,14 @@ const KIND_STYLE = {
 
 /** One bar above every screen: what the runner does, and Pause, Start and Stop. */
 export function TopBar({
+  runner,
   data,
   projects,
   selected,
   needsYou,
   harnesses,
 }: {
+  runner: RunnerOverviewState;
   data: AppData;
   projects: Project[] | null;
   selected: Project | null;
@@ -52,7 +54,7 @@ export function TopBar({
   harnesses: HarnessesState;
 }) {
   const held = useHeldScopes();
-  const { overview, denied, stale, reload } = useRunnerOverview();
+  const { overview, denied, stale, reload } = runner;
   const [budgetReset, setBudgetReset] = useState<string | null>(null);
   const [, bump] = useState(0);
   const [confirming, setConfirming] = useState(false);

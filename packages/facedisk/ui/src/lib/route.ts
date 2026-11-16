@@ -2,6 +2,7 @@ export type SettingsPageId =
   "project" | "agents" | "profiles" | "budgets" | "keys" | "automation" | "accounts";
 export type TaskView = "edit" | "changes" | "questions";
 export type Route =
+  | { name: "home" }
   | { name: "overview"; pid: string }
   | { name: "tasks"; pid: string }
   | { name: "task"; pid: string; taskId: string; view: TaskView }
@@ -27,7 +28,7 @@ export function parseRoute(path: string): Route | null {
   // One leading and one trailing slash are fine; empty, "." and ".." segments are not routes, and
   // neither are paths longer than the ones the server answers with the UI (see isUiPath).
   const trimmed = path.replace(/^\//, "").replace(/\/$/, "");
-  if (trimmed === "") return null;
+  if (trimmed === "") return { name: "home" };
   let segs: string[];
   try {
     segs = trimmed.split("/").map((s) => decodeURIComponent(s));
@@ -69,6 +70,7 @@ export function parseRoute(path: string): Route | null {
 
 /** App-relative (never starts with "/" or "#"); resolved against the pinned document base. */
 export function formatRoute(route: Route): string {
+  if (route.name === "home") return "./";
   if (route.name === "inbox") return "inbox";
   if (route.name === "doctor") return "doctor";
   const e = encodeURIComponent;
@@ -97,8 +99,15 @@ export function formatRoute(route: Route): string {
   }
 }
 
+/** Routes that belong to a project (all but Home, the Inbox and the Doctor). */
+export function hasPid<R extends Route>(
+  route: R,
+): route is Exclude<R, { name: "home" | "inbox" | "doctor" }> {
+  return route.name !== "home" && route.name !== "inbox" && route.name !== "doctor";
+}
+
 export function routePid(route: Route | null): string | null {
-  return route && route.name !== "inbox" && route.name !== "doctor" ? route.pid : null;
+  return route && hasPid(route) ? route.pid : null;
 }
 
 /** The equivalent screen in project `pid`; ids that belong to the old project are dropped. */
@@ -136,8 +145,7 @@ export function correctedRoute(
 ): Route | null {
   if (!projectIds || !selectedId) return null;
   if (!route) return { name: "overview", pid: selectedId };
-  if (route.name === "inbox" || route.name === "doctor" || projectIds.includes(route.pid))
-    return null;
+  if (!hasPid(route) || projectIds.includes(route.pid)) return null;
   return routeForProject(route, selectedId);
 }
 
@@ -145,6 +153,8 @@ export function correctedRoute(
 export function routeKey(route: Route | null): string {
   if (!route) return "";
   switch (route.name) {
+    case "home":
+      return "home";
     case "inbox":
       return "inbox";
     case "doctor":
@@ -210,7 +220,7 @@ export function nextPrevious(
 
 /** Where a task's "← …" link goes, and what it says, given the route the user came from. */
 export function backFor(previous: Route | null, pid: string): { route: Route; label: string } {
-  if (previous && previous.name !== "inbox" && previous.name !== "doctor" && previous.pid === pid) {
+  if (previous && hasPid(previous) && previous.pid === pid) {
     if (previous.name === "plans")
       return { route: previous, label: previous.planId ? "← Plan" : "← Plans" };
     if (previous.name === "tasks") return { route: previous, label: "← Tasks" };

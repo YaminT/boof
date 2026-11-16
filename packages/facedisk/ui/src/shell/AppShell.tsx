@@ -15,7 +15,9 @@ import { useCommandActions } from "./useCommandActions.js";
 import { useEpics } from "../tasks/useEpics.js";
 import { BottomBar } from "./BottomBar.js";
 import { ProjectMenu } from "./ProjectMenu.js";
-import { Rail } from "./Rail.js";
+import { HomeLink, Rail } from "./Rail.js";
+import { RunnerOverviewContext } from "../lib/runner-overview-context.js";
+import { useRunnerOverview } from "../lib/useRunnerOverview.js";
 import { TopBar } from "./TopBar.js";
 import { ThemeMenu } from "./ThemeMenu.js";
 import { inboxCount, inboxGroups } from "../lib/inbox.js";
@@ -38,7 +40,7 @@ function restoreMoreFocus() {
 
 /** What the assistant is told about the screen: the screen name and ids; the server adds titles. */
 export function conciergeContextOf(route: Route | null): ConciergeContext | null {
-  if (!route) return null;
+  if (!route || route.name === "home") return null;
   switch (route.name) {
     case "task":
       return { screen: "task", taskId: route.taskId };
@@ -77,6 +79,7 @@ export function AppShell({
   harnesses: HarnessesState;
   children: ReactNode;
 }) {
+  const runner = useRunnerOverview();
   const [adding, setAdding] = useState(false);
   const [searching, setSearching] = useState(false);
   const pid = selected?.id ?? null;
@@ -145,6 +148,7 @@ export function AppShell({
   };
 
   const go = (key: NavKey) => {
+    if (key === "home") return navigate({ name: "home" });
     if (key === "inbox") return navigate({ name: "inbox" });
     if (!pid) return;
     if (key === "settings") return navigate({ name: "settings", pid, page: "project" });
@@ -168,70 +172,76 @@ export function AppShell({
   );
 
   return (
-    <TooltipProvider>
-      <div className="flex min-h-screen bg-page font-sans text-ink">
-        <Rail
-          active={navKey(route)}
-          counts={counts}
-          go={go}
-          projectMenu={projectMenu()}
-          footer={
-            <>
-              <SearchButton onClick={() => setSearching(true)} withShortcut />
-              <ThemeMenu />
-            </>
-          }
-        />
-        <div className="flex min-w-0 flex-1 flex-col px-4 min-[720px]:px-8">
-          <TopBar
-            data={data}
-            projects={projects}
-            selected={selected}
-            needsYou={counts.inbox}
-            harnesses={harnesses}
+    <RunnerOverviewContext.Provider value={runner}>
+      <TooltipProvider>
+        <div className="flex min-h-screen bg-page font-sans text-ink">
+          <Rail
+            active={navKey(route)}
+            counts={counts}
+            go={go}
+            projectMenu={projectMenu()}
+            footer={
+              <>
+                <SearchButton onClick={() => setSearching(true)} withShortcut />
+                <ThemeMenu />
+              </>
+            }
           />
-          <main className="mx-auto w-full max-w-[1320px] min-w-0 flex-1 pt-6 pb-8 min-[720px]:pb-12">
-            {children}
-          </main>
-          <CommandConsole actions={consoleActions.actions} assistant={assistant} />
+          <div className="flex min-w-0 flex-1 flex-col px-4 min-[720px]:px-8">
+            <div className="flex h-11 items-center min-[720px]:hidden">
+              <HomeLink />
+            </div>
+            <TopBar
+              runner={runner}
+              data={data}
+              projects={projects}
+              selected={selected}
+              needsYou={counts.inbox}
+              harnesses={harnesses}
+            />
+            <main className="mx-auto w-full max-w-[1320px] min-w-0 flex-1 pt-6 pb-8 min-[720px]:pb-12">
+              {children}
+            </main>
+            <CommandConsole actions={consoleActions.actions} assistant={assistant} />
+          </div>
+          <BottomBar
+            active={navKey(route)}
+            counts={counts}
+            go={go}
+            moreContent={(close) => (
+              <>
+                <SearchButton
+                  onClick={() => {
+                    close();
+                    setSearching(true);
+                  }}
+                />
+                {projectMenu(close)}
+                <ThemeMenu onPicked={close} />
+              </>
+            )}
+          />
+          <CommandPalette
+            actions={availableActions(palette.actions, held)}
+            open={searching}
+            onOpenChange={setSearching}
+          />
+          {palette.stopDialog}
+          {consoleActions.stopDialog}
+          <AddProjectModal
+            open={adding}
+            onOpenChange={(open) => {
+              setAdding(open);
+              if (!open) restoreMoreFocus();
+            }}
+            projectsRoot={data.settings?.projectsRoot}
+            onAdded={(p) => {
+              setAdding(false);
+              onProjectAdded(p);
+            }}
+          />
         </div>
-        <BottomBar
-          active={navKey(route)}
-          counts={counts}
-          go={go}
-          moreContent={(close) => (
-            <>
-              <SearchButton
-                onClick={() => {
-                  close();
-                  setSearching(true);
-                }}
-              />
-              {projectMenu(close)}
-              <ThemeMenu onPicked={close} />
-            </>
-          )}
-        />
-        <CommandPalette
-          actions={availableActions(palette.actions, held)}
-          open={searching}
-          onOpenChange={setSearching}
-        />
-        {palette.stopDialog}
-        {consoleActions.stopDialog}
-        <AddProjectModal
-          open={adding}
-          onOpenChange={(open) => {
-            setAdding(open);
-            if (!open) restoreMoreFocus();
-          }}
-          projectsRoot={data.settings?.projectsRoot}
-          onAdded={(p) => {
-            setAdding(false);
-            onProjectAdded(p);
-          }}
-        />
-      </div>
-    </TooltipProvider>
+      </TooltipProvider>
+    </RunnerOverviewContext.Provider>
   );
 }

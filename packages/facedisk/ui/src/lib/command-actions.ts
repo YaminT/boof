@@ -128,6 +128,7 @@ export function createCommandActions(ctx: ActionContext): CommandAction[] {
 
   go("go-inbox", "Go to Inbox", { name: "inbox" });
   go("go-doctor", "Go to Setup check (Doctor)", { name: "doctor" });
+  go("go-home", "Go to Home", { name: "home" });
   if (pid) {
     go("go-overview", "Go to Overview", { name: "overview", pid });
     go("go-tasks", "Go to Tasks", { name: "tasks", pid });
