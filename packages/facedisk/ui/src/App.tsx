@@ -24,6 +24,7 @@ import { useHarnesses } from "./useHarnesses.js";
 import { DoctorPage } from "./doctor/DoctorPage.js";
 import { SetupCheckWidget } from "./doctor/SetupCheckWidget.js";
 import {
+  afterSignIn,
   continueRoute,
   forgetEntry,
   gateOf,
@@ -183,7 +184,7 @@ export function App() {
   const goOn = () => {
     forgetEntry(window.sessionStorage);
     const to = continueRoute(entry.current, selected?.id ?? null, projectIds);
-    navigate(to ?? { name: "inbox" }, { replace: true });
+    navigate(to ?? { name: "home" }, { replace: true });
   };
 
   // Sign-in cannot work while the server refuses to store sessions: show why instead of the gate.
@@ -194,8 +195,7 @@ export function App() {
       <TokenGate
         reason={needsToken}
         onSubmit={() => {
-          clearNeedsToken();
-          void refresh().catch(() => {});
+          afterSignIn({ clearNeedsToken, refreshHarnesses, refresh });
         }}
       />
     );

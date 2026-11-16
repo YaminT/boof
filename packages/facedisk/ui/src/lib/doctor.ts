@@ -122,16 +122,28 @@ export function summarize(checks: readonly DoctorCheck[]): DoctorSummary {
   return { passed: fails === 0, fails, warns };
 }
 
-/** Where "Back to boof" goes: the page the app was opened on, else the selected project's Overview. */
+/** Where "Back to boof" goes: the page the app was opened on, else Home. */
 export function continueRoute(
   entry: Route | null,
-  selectedPid: string | null,
+  _selectedPid: string | null,
   knownPids: readonly string[] | null,
 ): Route | null {
   if (entry && entry.name !== "doctor") {
     if (!hasPid(entry) || !knownPids || knownPids.includes(entry.pid)) return entry;
   }
-  return selectedPid ? { name: "overview", pid: selectedPid } : null;
+  return { name: "home" };
+}
+
+/** What a successful in-app sign-in does: every request that failed for lack of a session runs again. */
+export function afterSignIn(steps: {
+  clearNeedsToken: () => void;
+  refreshHarnesses: () => void;
+  refresh: () => Promise<unknown>;
+}): void {
+  steps.clearNeedsToken();
+  // The first harnesses check ran without a session and failed; the Doctor gate needs its answer.
+  steps.refreshHarnesses();
+  void steps.refresh().catch(() => {});
 }
 
 const ENTRY_KEY = "boof.doctor.entry";

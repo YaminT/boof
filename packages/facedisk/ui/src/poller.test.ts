@@ -53,4 +53,23 @@ describe("startPoller", () => {
     expect(load).toHaveBeenCalledTimes(2);
     p.stop();
   });
+
+  it("runs a refresh that an event asked for while a load was in flight", async () => {
+    let release: () => void = () => {};
+    let calls = 0;
+    const load = vi.fn(async () => {
+      calls += 1;
+      if (calls === 1) await new Promise<void>((r) => (release = r));
+    });
+    const p = startPoller({ load, live: () => true });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(load).toHaveBeenCalledTimes(1);
+    p.kick(); // an event arrives while the first load runs
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(load).toHaveBeenCalledTimes(1);
+    release();
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(load).toHaveBeenCalledTimes(2); // not after 30 s
+    p.stop();
+  });
 });

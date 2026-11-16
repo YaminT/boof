@@ -342,4 +342,10 @@ describe("wizard route", () => {
     expect(parseRoute("p/a/plans/other")).toEqual({ name: "plans", pid: "a", planId: "other" });
     expect(routePid({ name: "wizard", pid: "a" })).toBe("a");
   });
+
+  it("parses the Home path that formatRoute writes", () => {
+    expect(parseRoute(formatRoute({ name: "home" }))).toEqual({ name: "home" });
+    expect(parseRoute(".")).toEqual({ name: "home" });
+    expect(parseRoute("./x")).toBeNull();
+  });
 });

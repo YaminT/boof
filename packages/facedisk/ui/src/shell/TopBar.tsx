@@ -274,6 +274,11 @@ export function TopBar({
 
   // The last completion: kept for 10 minutes, until dismissed, or until new work starts.
   const [finished, setFinished] = useState<FinishedMemory>(EMPTY_FINISHED);
+  // Tasks of the selected project that ended failed or stopped (the other projects' statuses are not loaded).
+  const notDone = data.tasks
+    .filter((t) => ["failed", "stopped"].includes(t.frontmatter.status))
+    .map((t) => `${pid}/${t.frontmatter.id}`);
+  const notDoneKey = notDone.join("\n");
   const runningKey = state.running.map((r) => `${r.pid}/${r.taskId}`).join("\n");
   useEffect(() => {
     // The first overview is not a finish, and a missing overview says nothing about the queue.
@@ -284,9 +289,11 @@ export function TopBar({
         running: runningKey ? runningKey.split("\n") : [],
         queued,
         now: Date.now(),
+        notDone,
       }),
     );
-  }, [overview, denied, state.kind, runningKey, queued]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- notDone is read through its key
+  }, [overview, denied, state.kind, runningKey, queued, notDoneKey]);
   const finishedAt = finished.finished?.at;
   useEffect(() => {
     if (finishedAt === undefined) return;

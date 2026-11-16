@@ -25,7 +25,7 @@ describe.each([
   it.each(TOPBAR_TONES)("%s text meets WCAG AA on its tint", (tone) => {
     expect(contrast(t[`tb-${tone}-fg`], t[`tb-${tone}-bg`])).toBeGreaterThanOrEqual(4.5);
   });
-  it.each(TOPBAR_TONES)("%s dot and accent are visible on the tint (3:1)", (tone) => {
+  it.each(TOPBAR_TONES)("%s dot is visible on the tint (3:1)", (tone) => {
     expect(contrast(t[`tb-${tone}-dot`], t[`tb-${tone}-bg`])).toBeGreaterThanOrEqual(3);
   });
 });

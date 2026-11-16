@@ -3,6 +3,7 @@ import type { DoctorCheck, HarnessStatus } from "../api-types.js";
 import {
   blockReason,
   compactSummary,
+  afterSignIn,
   continueRoute,
   hintParts,
   needsAttention,
@@ -86,22 +87,47 @@ describe("summarize", () => {
   });
 });
 
+describe("afterSignIn", () => {
+  it("clears the sign-in gate and asks for the harnesses and the app data again", async () => {
+    const calls: string[] = [];
+    afterSignIn({
+      clearNeedsToken: () => calls.push("clear"),
+      refreshHarnesses: () => calls.push("harnesses"),
+      refresh: async () => void calls.push("refresh"),
+    });
+    await Promise.resolve();
+    expect(calls).toEqual(["clear", "harnesses", "refresh"]);
+  });
+  it("does not throw when the app data cannot be loaded", async () => {
+    afterSignIn({
+      clearNeedsToken: () => {},
+      refreshHarnesses: () => {},
+      refresh: () => Promise.reject(new Error("401")),
+    });
+    await Promise.resolve();
+  });
+});
+
 describe("continueRoute", () => {
   it("returns to the page the app was opened on when it still exists", () => {
     const entry = { name: "tasks", pid: "a" } as const;
     expect(continueRoute(entry, "a", ["a"])).toEqual(entry);
     expect(continueRoute({ name: "inbox" }, "a", ["a"])).toEqual({ name: "inbox" });
   });
-  it("falls back to the selected project's Overview", () => {
-    expect(continueRoute(null, "a", ["a"])).toEqual({ name: "overview", pid: "a" });
-    expect(continueRoute({ name: "doctor" }, "a", ["a"])).toEqual({ name: "overview", pid: "a" });
-    expect(continueRoute({ name: "tasks", pid: "gone" }, "a", ["a"])).toEqual({
-      name: "overview",
-      pid: "a",
-    });
+  it("falls back to Home", () => {
+    expect(continueRoute(null, "a", ["a"])).toEqual({ name: "home" });
+    expect(continueRoute({ name: "doctor" }, "a", ["a"])).toEqual({ name: "home" });
+    expect(continueRoute({ name: "tasks", pid: "gone" }, "a", ["a"])).toEqual({ name: "home" });
+    expect(continueRoute(null, null, [])).toEqual({ name: "home" });
   });
-  it("has nowhere to go before a project exists", () => {
-    expect(continueRoute(null, null, [])).toBeNull();
+  it("keeps Home as the remembered entry across a reload", () => {
+    const m = new Map<string, string>();
+    const storage = {
+      setItem: (k: string, v: string) => void m.set(k, v),
+      getItem: (k: string) => m.get(k) ?? null,
+    };
+    rememberEntry(storage, { name: "home" });
+    expect(recallEntry(storage)).toEqual({ name: "home" });
   });
 });
 

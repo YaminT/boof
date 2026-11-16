@@ -42,6 +42,7 @@ export function startPoller(o: PollerOptions): Poller {
   let fails = 0;
   let lastStart = 0;
   let dirty = false;
+  let pending = false;
 
   const delay = () =>
     fails > 0 ? Math.min(maxBackoff, backoff * 2 ** (fails - 1)) : o.live() ? liveMs : fallbackMs;
@@ -59,7 +60,11 @@ export function startPoller(o: PollerOptions): Poller {
       dirty = true;
       return;
     }
-    if (running) return;
+    if (running) {
+      // An event asked for a refresh while a load is in flight: run it right after.
+      pending = true;
+      return;
+    }
     running = true;
     dirty = false;
     lastStart = Date.now();
@@ -71,7 +76,10 @@ export function startPoller(o: PollerOptions): Poller {
     } finally {
       running = false;
     }
-    plan();
+    if (pending) {
+      pending = false;
+      plan(Math.max(0, lastStart + minGap - Date.now()));
+    } else plan();
   }
 
   const offVisible = onBecameVisible(() => {
@@ -84,6 +92,10 @@ export function startPoller(o: PollerOptions): Poller {
       if (stopped) return;
       if (isHidden()) {
         dirty = true;
+        return;
+      }
+      if (running) {
+        pending = true;
         return;
       }
       const wait = Math.max(0, lastStart + minGap - Date.now());

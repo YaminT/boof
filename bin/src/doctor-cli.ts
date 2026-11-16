@@ -1,8 +1,9 @@
 import { spawn } from "node:child_process";
-import { chmod, mkdir, stat } from "node:fs/promises";
+import { chmod, mkdir, realpath, stat } from "node:fs/promises";
 import { createInterface } from "node:readline";
 import { Writable } from "node:stream";
-import { isAbsolute, resolve } from "node:path";
+import { homedir } from "node:os";
+import { dirname, isAbsolute, relative, resolve } from "node:path";
 import {
   expandHome,
   OwlishSettingsSchema,
@@ -21,14 +22,15 @@ Usage:
 
 Prints the same checks as the Doctor in the web app: the coding agents (ready or not, and why),
 the better-ccflare gateway, the projects folder, git, the data folder and the sandbox.
-Free: it never sends a prompt. Exit 0 when boof can work (an agent is ready), 1 when it cannot.
+Free: it never sends a prompt. Exit 0 when boof can work (an agent is ready), 1 when it cannot,
+2 for a usage error (a typo, a bad flag) or when --fix has no terminal.
 
 --fix walks the checks that need attention, one at a time, and asks before it does anything. It
 needs an interactive terminal (exit 2 without one). Install commands are printed; an npm install
 runs only after you answer y. boof never runs sudo. Secrets are typed hidden and stored where boof
 already keeps them (mode 0600).
 --yes accepts the safe defaults (create the projects folder, make the data folder private) and
-never an install or a secret.`;
+never an install, a secret, or a change to which folders API clients may use.`;
 
 /** The part of the server's service the doctor uses. Tests pass a real one over a scratch folder. */
 export type DoctorService = Pick<
@@ -123,6 +125,23 @@ export function renderDoctor(status: HarnessStatusResult): string[] {
   return lines;
 }
 
+/** The user pressed Ctrl-C or Ctrl-D at a question. */
+export class DoctorCancelled extends Error {
+  constructor() {
+    super("cancelled");
+  }
+}
+
+/** The command and options to run npm: on Windows it is a .cmd file, which needs a shell. */
+function npmSpawn(
+  command: string,
+  platform: NodeJS.Platform = process.platform,
+): { command: string; shell: boolean } {
+  return command === "npm" && platform === "win32"
+    ? { command: "npm.cmd", shell: true }
+    : { command, shell: false };
+}
+
 /** A real terminal: readline over stdin/stdout; hidden answers are swallowed before they echo. */
 export function terminalIo(): DoctorIo {
   let muted = false;
@@ -132,36 +151,62 @@ export function terminalIo(): DoctorIo {
       cb();
     },
   });
-  const rl = createInterface({ input: process.stdin, output, terminal: true });
+  // historySize 0: readline's history would bring a hidden answer (a key) back with the Up arrow.
+  const rl = createInterface({ input: process.stdin, output, terminal: true, historySize: 0 });
+  let cancel: (() => void) | undefined;
+  const onCancel = () => {
+    muted = false;
+    cancel?.();
+  };
+  rl.on("SIGINT", () => {
+    process.stdout.write("\n");
+    rl.close();
+  });
+  rl.on("close", onCancel);
   return {
     isTTY: !!process.stdin.isTTY && !!process.stdout.isTTY,
     out: (l) => console.log(l),
     err: (l) => console.error(l),
     ask: (question, opts) =>
-      new Promise<string>((done) => {
+      new Promise<string>((done, fail) => {
+        cancel = () => fail(new DoctorCancelled());
         process.stdout.write(question);
         muted = opts?.hidden === true;
         rl.question("", (answer) => {
           muted = false;
+          cancel = undefined;
           if (opts?.hidden) process.stdout.write("\n");
           done(answer);
         });
       }),
     run: (command, args) =>
       new Promise<number>((done) => {
-        const child = spawn(command, [...args], { stdio: "inherit" });
-        child.on("error", () => done(127));
-        child.on("close", (code) => done(code ?? 1));
+        const n = npmSpawn(command);
+        try {
+          const child = spawn(n.command, [...args], { stdio: "inherit", shell: n.shell });
+          child.on("error", () => done(127));
+          child.on("close", (code) => done(code ?? 1));
+        } catch {
+          done(127);
+        }
       }),
-    close: () => rl.close(),
+    close: () => {
+      rl.off("close", onCancel);
+      rl.close();
+    },
   };
 }
 
 async function npmAvailable(): Promise<boolean> {
   return new Promise((done) => {
-    const child = spawn("npm", ["--version"], { stdio: "ignore" });
-    child.on("error", () => done(false));
-    child.on("close", (code) => done(code === 0));
+    const n = npmSpawn("npm");
+    try {
+      const child = spawn(n.command, ["--version"], { stdio: "ignore", shell: n.shell });
+      child.on("error", () => done(false));
+      child.on("close", (code) => done(code === 0));
+    } catch {
+      done(false);
+    }
   });
 }
 
@@ -281,7 +326,12 @@ async function fixGateway(ctx: Ctx, check: DoctorCheck): Promise<void> {
     }
     const key = (await io.ask(`Anthropic API key for ${id} (hidden): `, { hidden: true })).trim();
     if (!key) return;
-    await svc.projectKeys.set(id, key);
+    try {
+      await svc.projectKeys.set(id, key);
+    } catch (e) {
+      io.out(`The key was not saved: ${e instanceof Error ? e.message : "invalid key"}`);
+      return;
+    }
     io.out(`Saved the API key for ${id}.`);
   }
 }
@@ -304,21 +354,65 @@ async function fixProjectsRoot(ctx: Ctx, check: DoctorCheck): Promise<void> {
     }
   }
   path = resolve(path);
+  const refused = await refuseProjectsRoot(path, svc.root);
+  if (refused) {
+    io.out(`Not saved: ${refused}`);
+    return;
+  }
   try {
+    const existed = await stat(path).then(
+      (s) => s.isDirectory(),
+      () => false,
+    );
     await mkdir(path, { recursive: true, mode: 0o700 });
-    await chmod(path, 0o700).catch(() => undefined);
+    // Only a folder this run created is made private; an existing (maybe shared) one is left as it is.
+    if (!existed) await chmod(path, 0o700).catch(() => undefined);
     const security = SecuritySettingsSchema.parse(settings.security ?? {});
+    // Letting API clients register and create projects here is a security setting: ask on its own,
+    // and never under --yes.
+    let widen = false;
+    if (ctx.assumeYes) io.out("(--yes does not change which folders API clients may use.)");
+    else {
+      widen = yes(
+        await io.ask(
+          `Also let API clients register and create projects inside ${path} (adds it to security.allowedProjectRoots)? [y/N] `,
+        ),
+      );
+    }
     await svc.settingsStore.update({
       projectsRoot: path,
-      security: {
-        ...security,
-        allowedProjectRoots: [...new Set([...security.allowedProjectRoots, path])],
-      },
+      ...(widen
+        ? {
+            security: {
+              ...security,
+              allowedProjectRoots: [...new Set([...security.allowedProjectRoots, path])],
+            },
+          }
+        : {}),
     });
-    io.out(`Created ${path} and saved it as the projects folder.`);
+    io.out(
+      `${existed ? "Using" : "Created"} ${path} and saved it as the projects folder${widen ? ", and added it to the folders API clients may use" : ""}.`,
+    );
   } catch (e) {
     io.out(`Could not set it up: ${e instanceof Error ? e.message : String(e)}`);
   }
+}
+
+const sameOrInside = (parent: string, child: string): boolean => {
+  const rel = relative(parent, child);
+  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+};
+
+/** Why `path` cannot be the projects folder (the rule of assertRegistrationAllowed), or null. */
+async function refuseProjectsRoot(path: string, dataRoot: string): Promise<string | null> {
+  const real = async (p: string) => realpath(p).catch(() => p);
+  const target = await real(path);
+  if (dirname(target) === target) return "the filesystem root cannot be the projects folder.";
+  if (target === (await real(homedir())))
+    return "the home folder itself cannot be the projects folder; choose a folder inside it.";
+  if (sameOrInside(await real(dataRoot), target))
+    return "the data folder (or a folder inside it) cannot be the projects folder.";
+  return null;
 }
 
 async function fixDataRoot(ctx: Ctx, check: DoctorCheck): Promise<void> {
@@ -407,18 +501,18 @@ export async function doctorCommand(argv: readonly string[], deps: DoctorDeps): 
   const unknown = flags.filter((f) => !["--json", "--fix", "--yes", "-y"].includes(f));
   if (bad || unknown.length > 0 || words.length > 0) {
     console.error(bad ?? `unknown command: doctor ${[...words, ...unknown].join(" ")}`);
-    return 1;
+    return 2;
   }
   const json = flags.includes("--json");
   const fix = flags.includes("--fix");
   const assumeYes = flags.includes("--yes") || flags.includes("-y");
   if (assumeYes && !fix) {
     console.error("--yes only goes with --fix");
-    return 1;
+    return 2;
   }
   if (json && fix) {
     console.error("--json cannot be combined with --fix");
-    return 1;
+    return 2;
   }
   const root = data ? resolve(process.cwd(), data) : deps.defaultRoot();
   const svc = deps.service(root);
@@ -461,6 +555,12 @@ export async function doctorCommand(argv: readonly string[], deps: DoctorDeps): 
     io.out("\nAfter the fixes:\n");
     for (const l of renderDoctor(after)) io.out(l);
     return blockReason(after) === null ? 0 : 1;
+  } catch (e) {
+    if (e instanceof DoctorCancelled) {
+      io.err("\nCancelled. Nothing more was changed.");
+      return 130;
+    }
+    throw e;
   } finally {
     io.close();
   }

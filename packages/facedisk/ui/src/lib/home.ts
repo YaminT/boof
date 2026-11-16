@@ -104,7 +104,7 @@ export function homeCards(
   return cards.sort(
     (a, b) =>
       RANK[a.state] - RANK[b.state] ||
-      Date.parse(b.lastActivity ?? "") - Date.parse(a.lastActivity ?? "") ||
+      (Date.parse(b.lastActivity ?? "") || 0) - (Date.parse(a.lastActivity ?? "") || 0) ||
       a.project.name.localeCompare(b.project.name),
   );
 }

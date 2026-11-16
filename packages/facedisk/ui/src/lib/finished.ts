@@ -20,6 +20,8 @@ export interface FinishedInput {
   /** Tasks waiting for the runner. */
   queued: number;
   now: number;
+  /** `pid/taskId` of tasks known to have ended failed or stopped: they are not counted as done. */
+  notDone?: readonly string[];
 }
 
 /**
@@ -33,7 +35,9 @@ export function stepFinished(mem: FinishedMemory, input: FinishedInput): Finishe
     return seen.length === mem.seen.length && !mem.finished ? mem : { seen, finished: null };
   }
   if (input.kind === "idle" && input.queued === 0 && mem.seen.length > 0) {
-    return { seen: [], finished: { count: mem.seen.length, at: input.now } };
+    const bad = new Set(input.notDone ?? []);
+    const count = mem.seen.filter((id) => !bad.has(id)).length;
+    return { seen: [], finished: count > 0 ? { count, at: input.now } : null };
   }
   if (mem.finished && input.now - mem.finished.at >= FINISHED_TTL_MS) {
     return { ...mem, finished: null };

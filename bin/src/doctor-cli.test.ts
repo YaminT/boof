@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { TaskService } from "@boof/heart-server";
 import { ToolRegistry, type Tool } from "@boof/runner";
-import { doctorCommand, type DoctorDeps, type DoctorIo } from "./doctor-cli.js";
+import { DoctorCancelled, doctorCommand, type DoctorDeps, type DoctorIo } from "./doctor-cli.js";
 
 let scratch: string;
 let data: string;
@@ -126,11 +126,11 @@ describe("boof doctor", () => {
 
   it("refuses unknown words and flags, --yes without --fix, and --json with --fix", async () => {
     const d = deps([fakeTool("codex", true)]);
-    expect(await doctorCommand(["nope"], d)).toBe(1);
-    expect(await doctorCommand(["--bad"], d)).toBe(1);
-    expect(await doctorCommand(["--yes"], d)).toBe(1);
-    expect(await doctorCommand(["--json", "--fix"], d)).toBe(1);
-    expect(await doctorCommand(["-d"], d)).toBe(1);
+    expect(await doctorCommand(["nope"], d)).toBe(2);
+    expect(await doctorCommand(["--bad"], d)).toBe(2);
+    expect(await doctorCommand(["--yes"], d)).toBe(2);
+    expect(await doctorCommand(["--json", "--fix"], d)).toBe(2);
+    expect(await doctorCommand(["-d"], d)).toBe(2);
   });
 });
 
@@ -147,8 +147,8 @@ describe("boof doctor --fix", () => {
 
   it("creates the projects folder (mode 700) and saves it in settings after y", async () => {
     const folder = join(scratch, "my-projects");
-    // gateway: skip, projects folder: y + path.
-    const t = terminal(["n", "y", folder]);
+    // gateway: skip, projects folder: y + path, then y to let API clients use it.
+    const t = terminal(["n", "y", folder, "y"]);
     const d = deps([fakeTool("codex", true)], { io: t.io });
     expect(await doctorCommand(["--fix", "-d", data], d)).toBe(0);
     if (posix) expect((await stat(folder)).mode & 0o777).toBe(0o700);
@@ -164,6 +164,95 @@ describe("boof doctor --fix", () => {
     const t = terminal(["n", "n"]);
     await doctorCommand(["--fix", "-d", data], deps([fakeTool("codex", true)], { io: t.io }));
     await expect(stat(join(scratch, "boof-projects"))).rejects.toThrow();
+  });
+
+  it("saves the projects folder without widening allowedProjectRoots when the second question gets n", async () => {
+    const folder = join(scratch, "narrow");
+    const t = terminal(["n", "y", folder, "n"]);
+    await doctorCommand(["--fix", "-d", data], deps([fakeTool("codex", true)], { io: t.io }));
+    const settings = await new TaskService(data, new ToolRegistry([])).loadSettings();
+    expect(settings.projectsRoot).toBe(folder);
+    expect(settings.security?.allowedProjectRoots ?? []).not.toContain(folder);
+    expect(t.asked.some((a) => a.question.includes("allowedProjectRoots"))).toBe(true);
+  });
+
+  it("refuses ~ and / as the projects folder and saves nothing", async () => {
+    for (const typed of ["~", "/"]) {
+      const t = terminal(["n", "y", typed]);
+      await doctorCommand(["--fix", "-d", data], deps([fakeTool("codex", true)], { io: t.io }));
+      expect(t.lines.join("\n")).toContain("Not saved:");
+      expect(t.asked.some((a) => a.question.includes("allowedProjectRoots"))).toBe(false);
+      const settings = await new TaskService(data, new ToolRegistry([])).loadSettings();
+      expect(settings.projectsRoot).toBeUndefined();
+    }
+  });
+
+  it("refuses the data folder and a folder inside it", async () => {
+    const t = terminal(["n", "y", join(data, "projects")]);
+    await doctorCommand(["--fix", "-d", data], deps([fakeTool("codex", true)], { io: t.io }));
+    expect(t.lines.join("\n")).toContain("Not saved:");
+  });
+
+  it.skipIf(!posix)("does not chmod a projects folder that already exists", async () => {
+    const shared = join(scratch, "shared");
+    await mkdir(shared, { mode: 0o755 });
+    await chmod(shared, 0o755);
+    const t = terminal(["n", "y", shared, "n"]);
+    await doctorCommand(["--fix", "-d", data], deps([fakeTool("codex", true)], { io: t.io }));
+    expect((await stat(shared)).mode & 0o777).toBe(0o755);
+    const settings = await new TaskService(data, new ToolRegistry([])).loadSettings();
+    expect(settings.projectsRoot).toBe(shared);
+  });
+
+  it("--yes never adds the folder to allowedProjectRoots", async () => {
+    const t = terminal([]);
+    await doctorCommand(
+      ["--fix", "--yes", "-d", data],
+      deps([fakeTool("codex", true)], { io: t.io }),
+    );
+    const settings = await new TaskService(data, new ToolRegistry([])).loadSettings();
+    expect(settings.security?.allowedProjectRoots ?? []).not.toContain(
+      join(scratch, "boof-projects"),
+    );
+  });
+
+  it("a Ctrl-C at a question stops with exit 130 and says so", async () => {
+    const t = terminal([]);
+    t.io.ask = async () => {
+      throw new DoctorCancelled();
+    };
+    expect(
+      await doctorCommand(["--fix", "-d", data], deps([fakeTool("codex", true)], { io: t.io })),
+    ).toBe(130);
+    expect(t.lines.join("\n")).toContain("Cancelled");
+  });
+
+  it("a wrong per-project API key prints a short error and the walkthrough goes on", async () => {
+    const svc = new TaskService(data, new ToolRegistry([fakeTool("codex", true)]));
+    const repo = join(scratch, "repo");
+    await mkdir(repo, { recursive: true });
+    vi.spyOn(svc, "listProjects").mockResolvedValue([
+      { id: "p1", archived: false },
+    ] as unknown as Awaited<ReturnType<typeof svc.listProjects>>);
+    const t = terminal(["y", "2", "not-a-key", "n"]);
+    expect(
+      await doctorCommand(["--fix", "-d", data], deps([], { io: t.io, service: () => svc })),
+    ).toBe(0);
+    expect(t.lines.join("\n")).toContain("The key was not saved");
+    expect(t.lines.join("\n")).toContain("After the fixes");
+    expect(t.lines.join("\n")).not.toContain("not-a-key");
+  });
+
+  it("a data folder that does not exist yet is a warning, not a failure (exit 0 with an agent)", async () => {
+    const missing = join(scratch, "fresh-data");
+    expect(await doctorCommand(["-d", missing], deps([fakeTool("codex", true)]))).toBe(0);
+    expect(printed()).toMatch(/! Data folder\s+.*does not exist yet/);
+  });
+
+  it("names the claude binary, not claude-code, in the ready text", async () => {
+    await doctorCommand(["-d", data], deps([fakeTool("claude-code", true)]));
+    expect(printed()).toContain("run claude once in a terminal");
+    expect(printed()).not.toContain("run claude-code once");
   });
 
   it("takes the gateway address and a hidden key, stores the key 0600, and never prints it", async () => {
@@ -196,7 +285,10 @@ describe("boof doctor --fix", () => {
   it("offers an npm install only after y, and never uses sudo", async () => {
     // agents: decline; then the gateway and the projects folder: skip.
     const no = terminal(["n", "n", "n"]);
-    await doctorCommand(["--fix", "-d", data], deps([fakeTool("codex", false)], { io: no.io }));
+    await doctorCommand(
+      ["--fix", "-d", data],
+      deps([fakeTool("codex", false)], { io: no.io, hasNpm: async () => false }),
+    );
     expect(no.ran).toEqual([]);
     expect(no.lines.join("\n")).toContain("npm install -g @openai/codex");
 

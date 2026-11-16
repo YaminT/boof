@@ -90,6 +90,21 @@ describe("homeCards", () => {
     expect(d.goalsText).toBe("goals 7/11");
     expect(d.activityText).toBe("active 5m ago");
   });
+  it("sorts cards without lastActivity by name, after the ones with activity", () => {
+    const row = (id: string, lastActivity?: string) => ({
+      id,
+      paused: false,
+      running: [],
+      counts: {},
+      ...(lastActivity ? { lastActivity } : {}),
+    });
+    const ids = homeCards(
+      [proj("z"), proj("x"), proj("m"), proj("y")],
+      overview([row("z"), row("x"), row("m", "2026-11-16T11:00:00Z"), row("y")]),
+      now,
+    ).map((c) => c.project.id);
+    expect(ids).toEqual(["m", "x", "y", "z"]);
+  });
   it("copes with no overview", () => {
     expect(homeCards([proj("a")], null)[0]).toMatchObject({ state: "idle", total: 0 });
   });
