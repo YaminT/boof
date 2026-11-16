@@ -9,6 +9,7 @@ import { doctorCommand, type DoctorDeps, type DoctorIo } from "./doctor-cli.js";
 let scratch: string;
 let data: string;
 let savedHome: string | undefined;
+let savedProfile: string | undefined;
 
 const fakeTool = (id: string, installed: boolean): Tool =>
   ({
@@ -65,7 +66,9 @@ beforeEach(async () => {
   data = join(scratch, "data");
   await mkdir(data, { mode: 0o700 });
   savedHome = process.env.HOME;
+  savedProfile = process.env.USERPROFILE;
   process.env.HOME = scratch;
+  process.env.USERPROFILE = scratch;
   log = vi.spyOn(console, "log").mockImplementation(() => {}) as unknown as typeof log;
   vi.spyOn(console, "error").mockImplementation(() => {});
 });
@@ -73,6 +76,8 @@ afterEach(async () => {
   vi.restoreAllMocks();
   if (savedHome === undefined) delete process.env.HOME;
   else process.env.HOME = savedHome;
+  if (savedProfile === undefined) delete process.env.USERPROFILE;
+  else process.env.USERPROFILE = savedProfile;
   await chmod(data, 0o700).catch(() => {});
   await rm(scratch, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
 });
