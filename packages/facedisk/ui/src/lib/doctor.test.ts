@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { DoctorCheck, HarnessStatus } from "../api-types.js";
 import {
+  blockReason,
+  compactSummary,
   continueRoute,
+  hintParts,
+  needsAttention,
   fixRoute,
   forgetEntry,
   gateOf,
@@ -121,5 +125,73 @@ describe("remembered entry", () => {
     const st = mem();
     rememberEntry(st, { name: "doctor" });
     expect(recallEntry(st)).toBeNull();
+  });
+});
+
+describe("blockReason / gateOf", () => {
+  const withCheck = (anyReady: boolean, c: DoctorCheck[]): HarnessStatus => ({
+    ...status(anyReady),
+    checks: c,
+  });
+  const c = (id: DoctorCheck["id"], st: DoctorCheck["status"]): DoctorCheck => ({
+    id,
+    label: id,
+    status: st,
+    message: "",
+  });
+  it("blocks only when no agent is ready or git or the data folder hard-fails", () => {
+    expect(blockReason(withCheck(false, []))).toMatch(/no coding agent/);
+    expect(blockReason(withCheck(true, [c("git", "fail")]))).toMatch(/git/);
+    expect(blockReason(withCheck(true, [c("dataRoot", "fail")]))).toMatch(/dataRoot/);
+  });
+  it("never blocks on warnings or other failures when an agent is ready", () => {
+    const warns = withCheck(true, [
+      c("sandbox", "warn"),
+      c("gateway", "warn"),
+      c("projectsRoot", "warn"),
+    ]);
+    expect(blockReason(warns)).toBeNull();
+    expect(gateOf({ status: warns, loading: false, failed: false })).toBe("open");
+    expect(blockReason(withCheck(true, [c("projectsRoot", "fail")]))).toBeNull();
+  });
+});
+
+describe("hintParts", () => {
+  it("links Settings to the fix page, an API key to the project page, an install to Agents", () => {
+    const gw = hintParts("Configure the better-ccflare gateway in Settings.", "gateway", "a");
+    expect(gw.find((p) => p.route)).toEqual({
+      text: "Settings",
+      route: { name: "settings", pid: "a", page: "accounts" },
+    });
+    const both = hintParts(
+      "Configure it in Settings, or set an Anthropic API key.",
+      "gateway",
+      "a",
+    );
+    expect(both.filter((p) => p.route).map((p) => (p.route as { page: string }).page)).toEqual([
+      "accounts",
+      "project",
+    ]);
+    const inst = hintParts("Install claude-code.", "agents", null);
+    expect(inst.find((p) => p.route)?.route).toEqual({
+      name: "settings",
+      pid: "setup",
+      page: "agents",
+    });
+    expect(hintParts("Install git and check again.", undefined, "a").some((p) => p.route)).toBe(
+      false,
+    );
+  });
+});
+
+describe("needsAttention / compactSummary", () => {
+  it("treats an unconfigured gateway as optional while an agent works", () => {
+    const s: HarnessStatus = {
+      ...status(true),
+      checks: [{ id: "gateway", label: "g", status: "warn", message: "Not configured." }],
+    };
+    expect(needsAttention(s)).toBe(false);
+    expect(needsAttention({ ...s, anyReady: false })).toBe(true);
+    expect(compactSummary(s)).toContain("gateway not configured (optional)");
   });
 });
