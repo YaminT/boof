@@ -57,6 +57,7 @@ const terminal = (answers: string[], isTTY = true) => {
 };
 
 let log: { mock: { calls: unknown[][] } };
+const posix = process.platform !== "win32";
 const printed = () => log.mock.calls.map((c) => String(c[0])).join("\n");
 
 beforeEach(async () => {
@@ -145,7 +146,7 @@ describe("boof doctor --fix", () => {
     const t = terminal(["n", "y", folder]);
     const d = deps([fakeTool("codex", true)], { io: t.io });
     expect(await doctorCommand(["--fix", "-d", data], d)).toBe(0);
-    expect((await stat(folder)).mode & 0o777).toBe(0o700);
+    if (posix) expect((await stat(folder)).mode & 0o777).toBe(0o700);
     const settings = await new TaskService(data, new ToolRegistry([])).loadSettings();
     expect(settings.projectsRoot).toBe(folder);
     expect(settings.security?.allowedProjectRoots).toContain(folder);
@@ -172,7 +173,7 @@ describe("boof doctor --fix", () => {
     expect(t.asked.filter((a) => !a.hidden).every((a) => !a.question.includes(secret))).toBe(true);
     const file = join(data, "owlish", "secrets.json");
     expect(JSON.parse(await readFile(file, "utf8")).apiKey).toBe(secret);
-    expect((await stat(file)).mode & 0o777).toBe(0o600);
+    if (posix) expect((await stat(file)).mode & 0o777).toBe(0o600);
     const settings = await new TaskService(data, new ToolRegistry([])).loadSettings();
     expect(settings.owlish?.url).toBe("http://127.0.0.1:1");
     const everything = [...t.lines, printed(), ...t.asked.map((a) => a.question)].join("\n");
@@ -209,10 +210,12 @@ describe("boof doctor --fix", () => {
     await doctorCommand(["--fix", "--yes", "-d", data], d);
     expect(t.asked).toEqual([]);
     expect(t.ran).toEqual([]);
-    expect((await stat(join(scratch, "boof-projects"))).mode & 0o777).toBe(0o700);
+    const made = await stat(join(scratch, "boof-projects"));
+    expect(made.isDirectory()).toBe(true);
+    if (posix) expect(made.mode & 0o777).toBe(0o700);
   });
 
-  it("makes an unwritable data folder private again after y", async () => {
+  it.skipIf(!posix)("makes an unwritable data folder private again after y", async () => {
     if (process.getuid?.() === 0) return; // root can write anywhere: the check never fails
     const d = deps([fakeTool("codex", true)]);
     await chmod(data, 0o500);
