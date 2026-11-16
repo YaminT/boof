@@ -127,7 +127,7 @@ export function createCommandActions(ctx: ActionContext): CommandAction[] {
     add({ id, label, group: "Go to", run: () => fx.navigate(to) });
 
   go("go-inbox", "Go to Inbox", { name: "inbox" });
-  go("go-doctor", "Go to Setup check (Doctor)", { name: "doctor" });
+  go("go-doctor", "Go to Doctor", { name: "doctor" });
   go("go-home", "Go to Home", { name: "home" });
   if (pid) {
     go("go-overview", "Go to Overview", { name: "overview", pid });
