@@ -147,10 +147,8 @@ export const OP_COVERAGE: Record<string, { where: string } | { none: string }> =
   "accounts.resume": { where: "accountAction — AccountsPage (resume an account)" },
   "accounts.priority": { where: "accountPriority — AccountsPage (routing priority)" },
   "accounts.thresholds": { where: "accountThresholds — AccountsPage (usage pause thresholds)" },
-  "accounts.add": { none: "the internal-pool add form comes with the Accounts page mode switch" },
-  "accounts.remove": {
-    none: "the internal-pool remove button comes with the Accounts page mode switch",
-  },
+  "accounts.add": { where: "addAccount — AccountsPage (internal pool: add an API-key account)" },
+  "accounts.remove": { where: "removeAccount — AccountsPage (internal pool: remove an account)" },
   "accounts.import": {
     none: "the import is offered by `boof doctor --fix`; the Accounts page add form comes later",
   },
