@@ -89,6 +89,8 @@ describe("import from better-ccflare", () => {
   });
 
   it("looks in ~/.config/better-ccflare by default", () => {
-    expect(defaultCcflareDb("/home/u")).toBe("/home/u/.config/better-ccflare/better-ccflare.db");
+    expect(defaultCcflareDb("/home/u")).toBe(
+      join("/home/u", ".config", "better-ccflare", "better-ccflare.db"),
+    );
   });
 });
