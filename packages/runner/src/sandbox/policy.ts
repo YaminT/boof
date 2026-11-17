@@ -119,6 +119,12 @@ export interface SandboxPolicyContext {
   serverRunning: boolean;
   /** Boof server ports of this data root. Copied into `denyTcpPorts` even when the user lists none. */
   boofPorts: readonly number[];
+  /**
+   * The loopback port of boof's internal gateway for this run. The agent must be able to connect
+   * to it (and only to it among boof's own ports): it is never denied, even when `denyTcpPorts`
+   * lists it, and it cannot be a boof or desktop port.
+   */
+  gatewayPort?: number;
   /** Desktop app port, when one is open. */
   desktopPort?: number;
   /** `runner.sandbox.readPaths`. */
@@ -408,7 +414,21 @@ function denyPorts(ctx: SandboxPolicyContext): number[] {
   };
   for (const port of ctx.boofPorts) add(port, "boof");
   if (ctx.desktopPort !== undefined) add(ctx.desktopPort, "desktop");
-  for (const port of ctx.denyTcpPorts) add(port, "denyTcpPorts");
+  if (ctx.gatewayPort !== undefined) {
+    if (!Number.isInteger(ctx.gatewayPort) || ctx.gatewayPort < 1 || ctx.gatewayPort > 65535) {
+      throw new SandboxPolicyError(
+        "invalid_port",
+        `gateway port ${String(ctx.gatewayPort)} is outside 1 to 65535`,
+      );
+    }
+    if (seen.has(ctx.gatewayPort)) {
+      throw new SandboxPolicyError(
+        "invalid_port",
+        `gateway port ${String(ctx.gatewayPort)} is also a boof port`,
+      );
+    }
+  }
+  for (const port of ctx.denyTcpPorts) if (port !== ctx.gatewayPort) add(port, "denyTcpPorts");
   return out;
 }
 

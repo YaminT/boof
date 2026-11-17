@@ -114,7 +114,7 @@ export class SettingsStore {
   ): Promise<Settings> {
     return this.mutate((current) => {
       guard?.(current);
-      const { runner, projectsRoot, owlish, ...rest } = patch;
+      const { runner, projectsRoot, owlish, gateway, ...rest } = patch;
       const next = {
         ...current,
         ...rest,
@@ -123,6 +123,8 @@ export class SettingsStore {
       // `null` clears the projects root back to its default.
       if (owlish === null) delete next.owlish;
       else if (owlish !== undefined) next.owlish = owlish;
+      if (gateway === null) delete next.gateway;
+      else if (gateway !== undefined) next.gateway = gateway;
       if (projectsRoot === null) delete next.projectsRoot;
       else if (projectsRoot !== undefined) next.projectsRoot = projectsRoot;
       // `null` switches back to the plain roles.
@@ -152,13 +154,18 @@ export function settingsVersion(settings: { webhooks?: unknown; n8n?: unknown })
 }
 
 /** What {@link SettingsStore.update} accepts: any settings key, `runner` partial, `projectsRoot` nullable. */
-export type SettingsUpdate = Omit<Partial<Settings>, "runner" | "projectsRoot" | "owlish"> & {
+export type SettingsUpdate = Omit<
+  Partial<Settings>,
+  "runner" | "projectsRoot" | "owlish" | "gateway"
+> & {
   runner?: Partial<Omit<Settings["runner"], "sandbox">> & {
     sandbox?: Partial<Settings["runner"]["sandbox"]>;
   };
   projectsRoot?: string | null;
   /** `null` removes the account pool. */
   owlish?: Settings["owlish"] | null;
+  /** `null` removes the pool backend choice. */
+  gateway?: Settings["gateway"] | null;
 };
 
 function mergeRunner(

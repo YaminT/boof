@@ -15,6 +15,7 @@ import {
 export const PRIVATE_SUBDIRS = [
   "auth",
   "owlish",
+  "gateway",
   "webhooks",
   "audit",
   "idempotency",

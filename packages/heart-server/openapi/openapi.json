@@ -152,6 +152,7 @@
                   "browser_sessions_unavailable",
                   "rate_limited",
                   "not_configured",
+                  "not_supported",
                   "gateway_error",
                   "n8n_not_configured",
                   "upstream_failed",
@@ -1750,6 +1751,38 @@
             ],
             "default": null
           },
+          "gateway": {
+            "additionalProperties": false,
+            "properties": {
+              "healthGate": {
+                "enum": [
+                  "pause",
+                  "warn",
+                  "off"
+                ],
+                "type": "string"
+              },
+              "mode": {
+                "enum": [
+                  "internal",
+                  "better-ccflare",
+                  "none"
+                ],
+                "type": "string"
+              },
+              "strategy": {
+                "enum": [
+                  "ordered",
+                  "round-robin"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "mode"
+            ],
+            "type": "object"
+          },
           "mcp": {
             "additionalProperties": false,
             "properties": {
@@ -3106,6 +3139,174 @@
         ],
         "x-boof-scope": "settings:read",
         "x-mcp-tool": "boof_list_accounts"
+      },
+      "post": {
+        "description": "Adds an Anthropic Console API key (sk-ant-api...) to boof's internal account pool. Inputs: name, apiKey, optional priority (0 to 100, lower is used first). The key is write-only: it is stored in <data>/gateway/accounts.json (mode 0600) and never returned, logged or audited. Subscription (OAuth) tokens are not accepted. Needs settings:write and a trusted, project-unrestricted client. 409 not_supported unless settings.gateway.mode is internal.",
+        "operationId": "accounts.add",
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "apiKey": {
+                    "maxLength": 300,
+                    "minLength": 20,
+                    "type": "string",
+                    "writeOnly": true
+                  },
+                  "name": {
+                    "maxLength": 80,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "priority": {
+                    "maximum": 100,
+                    "minimum": 0,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "name",
+                  "apiKey"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "account": {
+                      "additionalProperties": {},
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "name": {
+                          "type": "string"
+                        },
+                        "paused": {
+                          "type": "boolean"
+                        },
+                        "priority": {
+                          "type": "number"
+                        },
+                        "provider": {
+                          "type": "string"
+                        },
+                        "rateLimitReset": {
+                          "type": [
+                            "string",
+                            "number",
+                            "null"
+                          ]
+                        },
+                        "rateLimitStatus": {
+                          "type": "string"
+                        },
+                        "tokenStatus": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "name"
+                      ],
+                      "type": "object"
+                    }
+                  },
+                  "required": [
+                    "account"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Add an API-key account",
+        "tags": [
+          "accounts"
+        ],
+        "x-boof-scope": "settings:write",
+        "x-mcp-tool": "boof_add_account"
+      }
+    },
+    "/accounts/{accountId}": {
+      "delete": {
+        "description": "Removes an account from boof's internal account pool and deletes its stored key. Input: accountId. Needs settings:write and a trusted, project-unrestricted client. 409 not_supported unless settings.gateway.mode is internal; 404 when the account does not exist.",
+        "operationId": "accounts.remove",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "accountId",
+            "required": true,
+            "schema": {
+              "description": "better-ccflare account id (see accounts.list).",
+              "maxLength": 200,
+              "minLength": 1,
+              "pattern": "^(?!\\.{1,2}$)[A-Za-z0-9._:-]+$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "ok": {
+                      "const": true,
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "ok"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Remove an account",
+        "tags": [
+          "accounts"
+        ],
+        "x-boof-scope": "settings:write",
+        "x-mcp-tool": "boof_remove_account"
       }
     },
     "/accounts/{accountId}/pause": {
@@ -15314,6 +15515,45 @@
                     "maxLength": 100,
                     "type": "string"
                   },
+                  "gateway": {
+                    "anyOf": [
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "healthGate": {
+                            "enum": [
+                              "pause",
+                              "warn",
+                              "off"
+                            ],
+                            "type": "string"
+                          },
+                          "mode": {
+                            "enum": [
+                              "internal",
+                              "better-ccflare",
+                              "none"
+                            ],
+                            "type": "string"
+                          },
+                          "strategy": {
+                            "enum": [
+                              "ordered",
+                              "round-robin"
+                            ],
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "mode"
+                        ],
+                        "type": "object"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
                   "models": {
                     "additionalProperties": {
                       "items": {
@@ -16836,6 +17076,10 @@
     "not_found": {
       "description": "The task, command, client or webhook does not exist.",
       "status": 404
+    },
+    "not_supported": {
+      "description": "The operation does not apply to the current account pool backend (for example, usage thresholds in the internal pool, or adding an account while better-ccflare is in use).",
+      "status": 409
     },
     "nothing_to_import": {
       "description": "The repository has no goal.boof.xml files to import.",

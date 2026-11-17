@@ -98,6 +98,8 @@ export interface AgentLaunchContext {
   runTempDir: string;
   /** Bound port of the server in this process. Omit when this process is not listening. */
   serverPort?: number;
+  /** Loopback port of the internal gateway; the policy keeps it reachable. */
+  gatewayPort?: number;
   /**
    * Where `HOME`, `PATH` and `XDG_STATE_HOME` are read from. Defaults to `process.env`.
    * Tests pass a scratch home and state directory.
@@ -612,6 +614,7 @@ export async function buildRunPolicy(
     home,
     serverRunning: livePort !== undefined,
     boofPorts: protectedPorts,
+    ...(ctx.gatewayPort !== undefined ? { gatewayPort: ctx.gatewayPort } : {}),
     readPaths: await configuredPaths(sandbox.readPaths, "read path"),
     writePaths: await configuredPaths(sandbox.writePaths, "write path"),
     denyTcpPorts: sandbox.denyTcpPorts,

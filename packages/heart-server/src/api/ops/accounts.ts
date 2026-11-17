@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { OpError } from "../errors.js";
 import { defineOp } from "../define-op.js";
 import {
   AccountSchema,
@@ -30,7 +31,9 @@ export const accountsList = defineOp({
   summary: (r) =>
     r.configured ? `${r.accounts.length} account(s)` : "No account pool is configured",
   handler: async (ctx) => {
-    if (!(await ctx.services.owlishClient())) return { configured: false, accounts: [] };
+    const mode = await ctx.services.poolMode();
+    if (mode === "none" || (mode === "better-ccflare" && !(await ctx.services.owlishClient())))
+      return { configured: false, accounts: [] };
     return { configured: true, accounts: await ctx.services.withPool((c) => c.accounts()) };
   },
 });
@@ -76,8 +79,18 @@ export const accountsHealth = defineOp({
       ? `Pool ${r.pool.status}${r.pool.reason ? `: ${r.pool.reason}` : ""}`
       : "No account pool is configured",
   handler: async (ctx, { refresh }) => {
-    const pool = await ctx.services.owlishClient().catch(() => null);
     const settings = await ctx.services.loadSettings();
+    if ((await ctx.services.poolMode()) === "internal") {
+      return {
+        configured: true,
+        url: null,
+        healthGate: settings.gateway?.healthGate ?? "pause",
+        keySource: null,
+        agentKeySource: null,
+        pool: await ctx.services.poolStatus(),
+      };
+    }
+    const pool = await ctx.services.owlishClient().catch(() => null);
     if (!settings.owlish) {
       return {
         configured: false,
@@ -103,7 +116,7 @@ function accountAction(
   verb: "pause" | "resume",
   title: string,
   tool: string,
-  call: (c: import("@boof/owlish").OwlishClient, id: string) => Promise<void>,
+  call: (c: import("@boof/owlish").PoolBackend, id: string) => Promise<void>,
 ) {
   return defineOp({
     name: `accounts.${verb}`,
@@ -182,7 +195,71 @@ export const accountsThresholds = defineOp({
   summary: () => "Account thresholds set",
   handler: async (ctx, { accountId, thresholds }) => {
     assertMayWriteSettings(ctx);
-    await ctx.services.withPool((c) => c.setThresholds(accountId, thresholds));
+    if ((await ctx.services.poolMode()) === "internal")
+      throw new OpError(
+        409,
+        "The internal pool has no usage windows to set thresholds on (API keys have per-minute and spend limits)",
+        "not_supported",
+      );
+    await ctx.services.withPool((c) =>
+      (c as import("@boof/owlish").OwlishClient).setThresholds(accountId, thresholds),
+    );
+    return { ok: true as const };
+  },
+});
+
+const internalOnly = async (ctx: { services: { poolMode(): Promise<string> } }) => {
+  const mode = await ctx.services.poolMode();
+  if (mode !== "internal")
+    throw new OpError(
+      409,
+      'The internal account pool is not in use: set settings.gateway.mode to "internal" first',
+      "not_supported",
+    );
+};
+
+export const accountsAdd = defineOp({
+  name: "accounts.add",
+  title: "Add an API-key account",
+  description:
+    "Adds an Anthropic Console API key (sk-ant-api...) to boof's internal account pool. Inputs: name, apiKey, optional priority (0 to 100, lower is used first). The key is write-only: it is stored in <data>/gateway/accounts.json (mode 0600) and never returned, logged or audited. Subscription (OAuth) tokens are not accepted. Needs settings:write and a trusted, project-unrestricted client. 409 not_supported unless settings.gateway.mode is internal.",
+  scope: "settings:write",
+  projectScoped: false,
+  input: z.strictObject({
+    name: z.string().trim().min(1).max(80),
+    apiKey: z.string().min(20).max(300).meta({ writeOnly: true }),
+    priority: z.number().int().min(0).max(100).optional(),
+  }),
+  output: z.object({ account: AccountSchema }),
+  rest: { method: "POST", path: "/accounts" },
+  mcp: { expose: true, name: "boof_add_account", annotations: IDEMPOTENT_WRITE },
+  summary: (r) => `Account ${r.account.name} added`,
+  handler: async (ctx, input) => {
+    assertMayWriteSettings(ctx);
+    await internalOnly(ctx);
+    const account = await ctx.services.withPool(async () =>
+      (await ctx.services.internalPool()).add(input),
+    );
+    return { account };
+  },
+});
+
+export const accountsRemove = defineOp({
+  name: "accounts.remove",
+  title: "Remove an account",
+  description:
+    "Removes an account from boof's internal account pool and deletes its stored key. Input: accountId. Needs settings:write and a trusted, project-unrestricted client. 409 not_supported unless settings.gateway.mode is internal; 404 when the account does not exist.",
+  scope: "settings:write",
+  projectScoped: false,
+  input: byAccount,
+  output: OkSchema,
+  rest: { method: "DELETE", path: "/accounts/{accountId}" },
+  mcp: { expose: true, name: "boof_remove_account", annotations: IDEMPOTENT_WRITE },
+  summary: () => "Account removed",
+  handler: async (ctx, { accountId }) => {
+    assertMayWriteSettings(ctx);
+    await internalOnly(ctx);
+    await ctx.services.withPool(async () => (await ctx.services.internalPool()).remove(accountId));
     return { ok: true as const };
   },
 });
@@ -195,4 +272,6 @@ export const accountOps = [
   accountsResume,
   accountsPriority,
   accountsThresholds,
+  accountsAdd,
+  accountsRemove,
 ];

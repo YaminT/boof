@@ -7,6 +7,7 @@ import http, {
 import https from "node:https";
 import type { Socket } from "node:net";
 import { classify, type Outcome } from "./limits.js";
+import { ConnectProxyAgent, proxyFromEnv } from "./proxy-agent.js";
 import type { Pool } from "./pool.js";
 import { redactSecrets } from "./redact.js";
 import type { TokenStore } from "./tokens.js";
@@ -64,6 +65,8 @@ export interface GatewayServerOptions {
   now?: () => number;
   /** Tests only: a fake upstream origin. */
   upstreamOrigin?: string;
+  /** Environment read for HTTPS_PROXY / NO_PROXY (D7). Default `process.env`; tests pass their own. */
+  env?: Record<string, string | undefined>;
   maxBodyBytes?: number;
   connectTimeoutMs?: number;
   headersTimeoutMs?: number;
@@ -147,9 +150,12 @@ export class GatewayServer {
     this.tokens = opts.tokens;
     this.now = opts.now ?? Date.now;
     this.origin = new URL(opts.upstreamOrigin ?? UPSTREAM_ORIGIN);
+    const proxy = proxyFromEnv(this.origin, opts.env ?? process.env);
     this.agent =
       this.origin.protocol === "https:"
-        ? new https.Agent({ keepAlive: true })
+        ? proxy
+          ? new ConnectProxyAgent(proxy, { keepAlive: true }, opts.connectTimeoutMs)
+          : new https.Agent({ keepAlive: true })
         : new http.Agent({ keepAlive: true });
     this.maxBody = opts.maxBodyBytes ?? MAX_BODY_BYTES;
     this.connectMs = opts.connectTimeoutMs ?? 10_000;

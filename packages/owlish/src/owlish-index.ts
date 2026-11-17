@@ -3,3 +3,4 @@ export * from "./owlish.js";
 export * from "./owlish-secrets.js";
 export * from "./agent-sdk-gate.js";
 export * from "./project-keys.js";
+export * from "./pool-backend.js";

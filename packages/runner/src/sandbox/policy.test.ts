@@ -330,6 +330,22 @@ describe("buildSandboxPolicy", () => {
     expect(several.denyTcpPorts).toEqual([4319, 4320, 5173, 443]);
   });
 
+  it("keeps the internal gateway's loopback port reachable and denies the boof ports", () => {
+    const policy = buildSandboxPolicy(
+      ctx({ boofPorts: [4319], gatewayPort: 41234, denyTcpPorts: [443, 41234] }),
+    );
+    // The gateway port is never denied, even when the user lists it; the others stay denied.
+    expect(policy.denyTcpPorts).toEqual([4319, 443]);
+    expect(policy.denyTcpPorts).not.toContain(41234);
+  });
+
+  it("refuses a gateway port that is also a boof port or out of range", () => {
+    expect(
+      refusal(() => buildSandboxPolicy(ctx({ boofPorts: [4319], gatewayPort: 4319 }))).code,
+    ).toBe("invalid_port");
+    expect(refusal(() => buildSandboxPolicy(ctx({ gatewayPort: 0 }))).code).toBe("invalid_port");
+  });
+
   it("keeps a known boof port when no server is running and the user lists nothing", () => {
     const policy = buildSandboxPolicy(
       ctx({ serverRunning: false, boofPorts: [4319], denyTcpPorts: [] }),

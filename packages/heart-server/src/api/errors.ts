@@ -109,6 +109,10 @@ export const ERROR_CODES = {
   ],
   rate_limited: [429, "Too many requests; retry after the Retry-After header."],
   not_configured: [409, "No account pool is configured (settings.owlish is not set)."],
+  not_supported: [
+    409,
+    "The operation does not apply to the current account pool backend (for example, usage thresholds in the internal pool, or adding an account while better-ccflare is in use).",
+  ],
   gateway_error: [502, "The account pool gateway (better-ccflare) failed or is unreachable."],
   n8n_not_configured: [409, "No n8n instance is configured (settings.n8n is not set)."],
   upstream_failed: [

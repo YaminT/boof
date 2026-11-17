@@ -232,6 +232,7 @@ describe("backup and restore", () => {
     await new WebhookSecretStore(root).set("hook", "wh-secret");
     await new N8nSecretStore(root).setApiKey("n8n-key-value");
     await writeSecret(join(root, "owlish", "secrets.json"), '{"token":"owl"}\n');
+    await writeSecret(join(root, "gateway", "accounts.json"), '{"version":1,"accounts":[]}\n');
     await writeSecret(join(root, "external-runs", `xr-${"ab".repeat(16)}.json`), "{}\n");
     await writeSecret(join(root, "projects", "shop", "secrets.json"), '{"k":1}\n');
     await writeSecret(join(root, "n8n", "workflows.json"), "{}\n");
@@ -325,6 +326,7 @@ describe("backup and restore", () => {
         "n8n/workflows.json",
         "n8n/seen.json",
         "owlish/secrets.json",
+        "gateway/accounts.json",
         "projects/shop/secrets.json",
       ]) {
         expect(await modeOf(join(dest, rel)), rel).toBe(0o600);
@@ -344,6 +346,10 @@ describe("backup and restore", () => {
     await writeSecret(join(root, "n8n", "workflows.json"), '{"keep":true}\n');
     await writeSecret(join(root, "owlish", "project-keys.json"), '{"shop":"sk-secret"}\n');
     await writeSecret(
+      join(root, "gateway", "accounts.json"),
+      '{"accounts":[{"apiKey":"sk-ant-api03-SECRET"}]}\n',
+    );
+    await writeSecret(
       join(root, "claude-agent-config", "shop", ".credentials.json"),
       '{"token":"secret"}\n',
     );
@@ -357,6 +363,7 @@ describe("backup and restore", () => {
     expect(paths.some((p) => p.includes("external-runs"))).toBe(false);
     expect(paths.some((p) => p.endsWith("secrets.json"))).toBe(false);
     expect(paths.some((p) => p === "root/n8n" || p.startsWith("root/n8n/"))).toBe(false);
+    expect(paths.some((p) => p.startsWith("root/gateway"))).toBe(false);
     for (const secretPath of [
       "owlish/project-keys.json",
       "claude-agent-config/shop/.credentials.json",

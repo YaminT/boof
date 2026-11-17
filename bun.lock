@@ -129,6 +129,7 @@
       "name": "@boof/owlish",
       "version": "0.7.0",
       "dependencies": {
+        "@boof/gateway": "*",
         "@boof/heart": "*",
         "zod": "^4.6.7",
       },
