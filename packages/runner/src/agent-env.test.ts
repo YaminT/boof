@@ -247,6 +247,8 @@ describe("routing through the account pool gateway", () => {
     expect(gatewayEnv("anthropic", gw)).toEqual({
       ANTHROPIC_BASE_URL: "http://127.0.0.1:8080",
       ANTHROPIC_AUTH_TOKEN: "ccf-client-key",
+      NO_PROXY: "127.0.0.1",
+      no_proxy: "127.0.0.1",
     });
     expect(gatewayEnv("anthropic", { url: "https://gw:8080" })).toEqual({
       ANTHROPIC_BASE_URL: "https://gw:8080",
