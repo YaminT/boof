@@ -1,0 +1,388 @@
+import { randomBytes } from "node:crypto";
+import {
+  AccountsStore,
+  PROVIDER,
+  freshState,
+  isAnthropicApiKey,
+  type AccountRecord,
+  type AccountState,
+} from "./accounts-store.js";
+import { CREDIT_RECHECK_MS, type Outcome } from "./limits.js";
+
+export type Strategy = "ordered" | "round-robin";
+
+/** Same shape and words as the better-ccflare `PoolStatus` that boof reads today. */
+export type PoolState = "absent" | "unreachable" | "ok" | "degraded" | "unhealthy";
+export interface PoolStatus {
+  status: PoolState;
+  configured: number | null;
+  routable: number | null;
+  paused: number | null;
+  rateLimited: number | null;
+  usageExhausted: number | null;
+  nextAvailableAt: string | null;
+  reason: string | null;
+}
+
+/** One account as the Accounts page renders it; never carries the key. */
+export interface AccountSummary {
+  id: string;
+  name: string;
+  provider: typeof PROVIDER;
+  hasRefreshToken: false;
+  priority: number;
+  paused: boolean;
+  pauseReason: "manual" | "auth" | null;
+  rateLimitStatus: "allowed" | "rate_limited" | "usage_exhausted";
+  rateLimitReset: string | null;
+  lastUsed: string | null;
+  requestCount: number;
+}
+
+export interface PoolOptions {
+  store: AccountsStore;
+  /** Epoch ms; injected so tests never use real time. */
+  now?: () => number;
+  strategy?: Strategy;
+  newId?: () => string;
+}
+
+export interface PickedAccount {
+  id: string;
+  apiKey: string;
+}
+
+const NAME_MAX = 80;
+type Availability = "paused" | "usage_exhausted" | "rate_limited" | "routable";
+
+/**
+ * The account pool. Selection per request, pause until reset, and a `PoolStatus` built from the
+ * state. Holds API-key accounts only. State changes are written behind the call (`flush()`
+ * waits for them); the admin calls (`add`, `remove`, `pause`, ...) wait for the write.
+ */
+export class Pool {
+  private accounts: AccountRecord[] = [];
+  private state = new Map<string, AccountState>();
+  private readonly store: AccountsStore;
+  private readonly now: () => number;
+  private readonly newId: () => string;
+  private strategy: Strategy;
+  private lastPicked: string | null = null;
+  private writing: Promise<void> = Promise.resolve();
+  private writeError: unknown;
+
+  private constructor(opts: PoolOptions) {
+    this.store = opts.store;
+    this.now = opts.now ?? Date.now;
+    this.strategy = opts.strategy ?? "ordered";
+    this.newId = opts.newId ?? (() => `acc-${randomBytes(6).toString("hex")}`);
+  }
+
+  static async open(opts: PoolOptions): Promise<Pool> {
+    const pool = new Pool(opts);
+    pool.accounts = await opts.store.loadAccounts();
+    const saved = await opts.store.loadState();
+    for (const a of pool.accounts) pool.state.set(a.id, saved.get(a.id) ?? freshState());
+    return pool;
+  }
+
+  setStrategy(strategy: Strategy): void {
+    this.strategy = strategy;
+  }
+
+  // ---- admin -------------------------------------------------------------------------------
+
+  async add(input: { name: string; apiKey: string; priority?: number }): Promise<AccountSummary> {
+    const name = input.name.trim();
+    if (name.length < 1 || name.length > NAME_MAX) {
+      throw new Error(`the name must be 1-${NAME_MAX} characters`);
+    }
+    if (!isAnthropicApiKey(input.apiKey)) {
+      throw new Error("the key must be an Anthropic Console API key (sk-ant-api…)");
+    }
+    const priority = input.priority ?? this.nextPriority();
+    this.checkPriority(priority);
+    if (this.accounts.some((a) => a.apiKey === input.apiKey)) {
+      throw new Error("that key is already in the pool");
+    }
+    const record: AccountRecord = {
+      id: this.newId(),
+      name,
+      provider: PROVIDER,
+      apiKey: input.apiKey,
+      priority,
+      createdAt: new Date(this.now()).toISOString(),
+    };
+    await this.store.saveAccounts([...this.accounts, record]);
+    this.accounts.push(record);
+    this.state.set(record.id, freshState());
+    await this.persistNow();
+    return this.summary(record);
+  }
+
+  async remove(id: string): Promise<boolean> {
+    const next = this.accounts.filter((a) => a.id !== id);
+    if (next.length === this.accounts.length) return false;
+    await this.store.saveAccounts(next);
+    this.accounts = next;
+    this.state.delete(id);
+    if (this.lastPicked === id) this.lastPicked = null;
+    await this.persistNow();
+    return true;
+  }
+
+  async setPriority(id: string, priority: number): Promise<boolean> {
+    this.checkPriority(priority);
+    const a = this.find(id);
+    if (!a) return false;
+    const accounts = this.accounts.map((x) => (x.id === id ? { ...x, priority } : x));
+    await this.store.saveAccounts(accounts);
+    this.accounts = accounts;
+    return true;
+  }
+
+  async pause(id: string): Promise<boolean> {
+    const s = this.state.get(id);
+    if (!s) return false;
+    s.paused = true;
+    s.pauseReason = "manual";
+    await this.persistNow();
+    return true;
+  }
+
+  /** Clears a manual or auth pause and any rate-limit or credit wait. */
+  async resume(id: string): Promise<boolean> {
+    const s = this.state.get(id);
+    if (!s) return false;
+    s.paused = false;
+    s.pauseReason = null;
+    s.rateLimitedUntil = null;
+    s.usageExhaustedAt = null;
+    await this.persistNow();
+    return true;
+  }
+
+  // ---- per request ---------------------------------------------------------------------------
+
+  /**
+   * The account to use for one request, or null when none can take traffic. `exclude` holds
+   * accounts that already failed this request. Counts the request and remembers the choice.
+   */
+  pick(exclude: Iterable<string> = []): PickedAccount | null {
+    const skip = new Set(exclude);
+    const usable = this.sorted().filter(
+      (a) => !skip.has(a.id) && this.availability(a.id) === "routable",
+    );
+    if (usable.length === 0) return null;
+    let chosen: AccountRecord;
+    if (this.strategy === "round-robin") {
+      // Rotation follows the full order, so a skipped account does not break the cycle.
+      const order = this.sorted();
+      const from = order.findIndex((a) => a.id === this.lastPicked);
+      const ids = new Set(usable.map((a) => a.id));
+      let found: AccountRecord | undefined;
+      for (let i = 1; i <= order.length && !found; i++) {
+        const candidate = order[(from + i + order.length) % order.length]!;
+        if (ids.has(candidate.id)) found = candidate;
+      }
+      chosen = found ?? usable[0]!;
+    } else {
+      const best = usable[0]!.priority;
+      const tied = usable.filter((a) => a.priority === best);
+      chosen = tied.find((a) => a.id === this.lastPicked) ?? tied[0]!;
+    }
+    this.lastPicked = chosen.id;
+    const s = this.stateOf(chosen.id);
+    s.lastUsed = this.now();
+    s.requestCount += 1;
+    this.persist();
+    return { id: chosen.id, apiKey: chosen.apiKey };
+  }
+
+  /** Apply the outcome of a request to its account. */
+  report(id: string, outcome: Outcome, httpStatus?: number): void {
+    const s = this.state.get(id);
+    if (!s) return;
+    if (httpStatus !== undefined) s.lastStatus = httpStatus;
+    switch (outcome.kind) {
+      case "rate_limited":
+        s.rateLimitedUntil = outcome.until;
+        break;
+      case "auth":
+        s.paused = true;
+        s.pauseReason = "auth";
+        break;
+      case "credit":
+        s.usageExhaustedAt = this.now();
+        break;
+      case "ok":
+      case "transient":
+      case "other":
+        break;
+    }
+    this.persist();
+  }
+
+  /** Count tokens for an account (counters only). */
+  recordUsage(id: string, usage: { inputTokens?: number; outputTokens?: number }): void {
+    const s = this.state.get(id);
+    if (!s) return;
+    const add = (n: number | undefined) => (Number.isFinite(n) && n! > 0 ? Math.floor(n!) : 0);
+    s.inputTokens += add(usage.inputTokens);
+    s.outputTokens += add(usage.outputTokens);
+    this.persist();
+  }
+
+  // ---- views ---------------------------------------------------------------------------------
+
+  accountList(): AccountSummary[] {
+    return this.sorted().map((a) => this.summary(a));
+  }
+
+  /** The pool right now, built from account state and the clock. */
+  status(): PoolStatus {
+    const configured = this.accounts.length;
+    const counts = { paused: 0, rateLimited: 0, usageExhausted: 0, routable: 0 };
+    let next: number | null = null;
+    for (const a of this.accounts) {
+      const av = this.availability(a.id);
+      if (av === "paused") counts.paused++;
+      else if (av === "usage_exhausted") counts.usageExhausted++;
+      else if (av === "rate_limited") counts.rateLimited++;
+      else counts.routable++;
+      const back = this.availableAt(a.id);
+      if (back !== null && (next === null || back < next)) next = back;
+    }
+    const base = { configured, ...counts };
+    if (configured === 0) {
+      return {
+        status: "absent",
+        ...base,
+        nextAvailableAt: null,
+        reason: "No accounts in the pool",
+      };
+    }
+    if (counts.routable === configured) {
+      return { status: "ok", ...base, nextAvailableAt: null, reason: null };
+    }
+    const parts = [
+      counts.paused ? `${counts.paused} paused` : "",
+      counts.rateLimited ? `${counts.rateLimited} rate-limited` : "",
+      counts.usageExhausted ? `${counts.usageExhausted} out of credit` : "",
+    ].filter(Boolean);
+    if (counts.routable > 0) {
+      return {
+        status: "degraded",
+        ...base,
+        nextAvailableAt: null,
+        reason: `${configured - counts.routable} of ${configured} accounts unavailable: ${parts.join(", ")}`,
+      };
+    }
+    return {
+      status: "unhealthy",
+      ...base,
+      nextAvailableAt: next === null ? null : new Date(next).toISOString(),
+      reason: `No account can take requests: ${parts.join(", ")}`,
+    };
+  }
+
+  /** Every key in the pool, for redacting logs and errors. Never log the result. */
+  secrets(): string[] {
+    return this.accounts.map((a) => a.apiKey);
+  }
+
+  /** Wait for queued state writes; rethrows the last write failure once. */
+  async flush(): Promise<void> {
+    await this.writing;
+    if (this.writeError !== undefined) {
+      const err = this.writeError;
+      this.writeError = undefined;
+      throw err;
+    }
+  }
+
+  // ---- internals -----------------------------------------------------------------------------
+
+  private find(id: string): AccountRecord | undefined {
+    return this.accounts.find((a) => a.id === id);
+  }
+
+  private stateOf(id: string): AccountState {
+    let s = this.state.get(id);
+    if (!s) this.state.set(id, (s = freshState()));
+    return s;
+  }
+
+  private sorted(): AccountRecord[] {
+    return [...this.accounts].sort(
+      (a, b) => a.priority - b.priority || a.createdAt.localeCompare(b.createdAt),
+    );
+  }
+
+  private nextPriority(): number {
+    return Math.min(
+      100,
+      this.accounts.reduce((m, a) => Math.max(m, a.priority + 1), 0),
+    );
+  }
+
+  private checkPriority(p: number): void {
+    if (!Number.isInteger(p) || p < 0 || p > 100) {
+      throw new Error("the priority must be a whole number from 0 to 100");
+    }
+  }
+
+  private availability(id: string): Availability {
+    const s = this.stateOf(id);
+    const t = this.now();
+    if (s.paused) return "paused";
+    if (s.usageExhaustedAt !== null && t < s.usageExhaustedAt + CREDIT_RECHECK_MS) {
+      return "usage_exhausted";
+    }
+    if (s.rateLimitedUntil !== null && t < s.rateLimitedUntil) return "rate_limited";
+    return "routable";
+  }
+
+  /** When an unavailable, unpaused account is usable again (epoch ms), else null. */
+  private availableAt(id: string): number | null {
+    const s = this.stateOf(id);
+    const av = this.availability(id);
+    if (av === "usage_exhausted")
+      return Math.max(s.usageExhaustedAt! + CREDIT_RECHECK_MS, s.rateLimitedUntil ?? 0);
+    if (av === "rate_limited") return s.rateLimitedUntil;
+    return null;
+  }
+
+  private summary(a: AccountRecord): AccountSummary {
+    const s = this.stateOf(a.id);
+    const av = this.availability(a.id);
+    const reset = av === "paused" ? null : this.availableAt(a.id);
+    return {
+      id: a.id,
+      name: a.name,
+      provider: a.provider,
+      hasRefreshToken: false,
+      priority: a.priority,
+      paused: s.paused,
+      pauseReason: s.pauseReason,
+      rateLimitStatus: av === "paused" || av === "routable" ? "allowed" : av,
+      rateLimitReset: reset === null ? null : new Date(reset).toISOString(),
+      lastUsed: s.lastUsed === null ? null : new Date(s.lastUsed).toISOString(),
+      requestCount: s.requestCount,
+    };
+  }
+
+  private persist(): void {
+    const snapshot = new Map([...this.state].map(([k, v]) => [k, { ...v }] as const));
+    this.writing = this.writing
+      .then(() => this.store.saveState(snapshot))
+      .catch((err: unknown) => {
+        this.writeError = err;
+      });
+  }
+
+  private async persistNow(): Promise<void> {
+    this.persist();
+    await this.flush();
+  }
+}
