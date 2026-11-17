@@ -18,6 +18,10 @@ export interface AccountRecord {
   /** 0 to 100; the lowest number is used first. */
   priority: number;
   createdAt: string;
+  /** A manual pause; kept here (not in state.json) so it holds across processes. */
+  paused?: boolean;
+  /** Epoch ms of the last resume; a process that sees it change clears its auth/limit waits. */
+  resumedAt?: number;
 }
 
 /** Runtime state; carries no key. Times are epoch ms. */
@@ -52,6 +56,8 @@ const AccountSchema = z.object({
   apiKey: z.custom<string>(isAnthropicApiKey),
   priority: z.number().int().min(0).max(100),
   createdAt: z.string(),
+  paused: z.boolean().optional(),
+  resumedAt: z.number().finite().optional(),
 });
 const AccountsFile = z.object({ version: z.literal(1), accounts: z.array(AccountSchema) });
 

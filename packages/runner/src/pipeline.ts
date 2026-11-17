@@ -827,7 +827,9 @@ export class Pipeline {
   /** Is the pool unusable right now (a fresh look)? False for tools it does not serve. */
   private async poolDown(tool: Tool, agentGateway = false): Promise<boolean> {
     const pool = this.deps.pool;
-    if (!pool || (!tool.acceptsPool && !agentGateway)) return false;
+    if (!pool || (!toolUsesPool(tool, resolveGatewayMode(this.deps.settings)) && !agentGateway)) {
+      return false;
+    }
     return (await pool.check({ fresh: true })).blocked;
   }
 
@@ -839,7 +841,7 @@ export class Pipeline {
    */
   private async awaitPool(id: string, tool: Tool, fresh = false): Promise<void> {
     const pool = this.deps.pool;
-    if (!pool || !tool.acceptsPool) return;
+    if (!pool || !toolUsesPool(tool, resolveGatewayMode(this.deps.settings))) return;
     if (!(await pool.check({ fresh })).blocked) return;
     const maxMs = retrySettings(this.deps.settings).poolWaitMs;
     const started = Date.now();

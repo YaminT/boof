@@ -18,7 +18,10 @@ export const UPSTREAM_ORIGIN = "https://api.anthropic.com";
 export const MAX_BODY_BYTES = 32 * 1024 * 1024;
 /** All request bodies being buffered at once, across tokens. */
 export const MAX_INFLIGHT_BODY_BYTES = 128 * 1024 * 1024;
+const KNOWN_VERSIONS = new Set(["2023-06-01"]);
 const MAX_ATTEMPTS = 3;
+/** Credit or auth answers one request may record against accounts. */
+const MAX_MARKS_PER_REQUEST = 2;
 const MAX_ERROR_BODY = 1024 * 1024;
 
 type Route = { methods: string[]; usage: boolean };
@@ -72,6 +75,10 @@ export interface GatewayServerOptions {
   maxBodyBytes?: number;
   /** Cap on request bytes held in memory at once; default 128 MiB. */
   maxInflightBodyBytes?: number;
+  /** Cap on request bytes one run may hold at once; default 2 x maxBodyBytes (at most half the total). */
+  maxRunInflightBodyBytes?: number;
+  /** Time allowed to receive a whole request (headers and body); default 60 s. */
+  requestTimeoutMs?: number;
   connectTimeoutMs?: number;
   headersTimeoutMs?: number;
   idleTimeoutMs?: number;
@@ -104,7 +111,13 @@ function sendJson(
 
 class TooLarge extends Error {}
 
-function readBody(req: IncomingMessage, max: number): Promise<Buffer> {
+class OverBudget extends Error {}
+
+function readBody(
+  req: IncomingMessage,
+  max: number,
+  take: (n: number) => boolean,
+): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const declared = Number(req.headers["content-length"]);
     if (Number.isFinite(declared) && declared > max) return reject(new TooLarge());
@@ -118,11 +131,19 @@ function readBody(req: IncomingMessage, max: number): Promise<Buffer> {
         req.pause();
         return;
       }
+      // Count what actually arrived, not what the header promised.
+      if (!take(c.length)) {
+        chunks.length = 0;
+        reject(new OverBudget());
+        req.pause();
+        return;
+      }
       chunks.push(c);
     });
     req.on("end", () => resolve(Buffer.concat(chunks)));
     req.on("error", reject);
     req.on("aborted", () => reject(new Error("client aborted")));
+    req.on("close", () => reject(new Error("client closed")));
   });
 }
 
@@ -144,6 +165,9 @@ export class GatewayServer {
   private readonly maxBody: number;
   private readonly maxInflight: number;
   private inflight = 0;
+  private readonly maxRunInflight: number;
+  private readonly runInflight = new Map<string, number>();
+  private readonly requestMs: number;
   private readonly connectMs: number;
   private readonly headersMs: number;
   private readonly idleMs: number;
@@ -165,6 +189,9 @@ export class GatewayServer {
         : new http.Agent({ keepAlive: true });
     this.maxBody = opts.maxBodyBytes ?? MAX_BODY_BYTES;
     this.maxInflight = opts.maxInflightBodyBytes ?? MAX_INFLIGHT_BODY_BYTES;
+    this.maxRunInflight =
+      opts.maxRunInflightBodyBytes ?? Math.min(2 * this.maxBody, this.maxInflight / 2);
+    this.requestMs = opts.requestTimeoutMs ?? 60_000;
     this.connectMs = opts.connectTimeoutMs ?? 10_000;
     this.headersMs = opts.headersTimeoutMs ?? 10 * 60_000;
     this.idleMs = opts.idleTimeoutMs ?? 5 * 60_000;
@@ -180,6 +207,8 @@ export class GatewayServer {
         sendJson(res, 502, "api_error", "Gateway error");
       });
     });
+    server.requestTimeout = this.requestMs;
+    server.headersTimeout = Math.min(this.requestMs, 60_000);
     server.on("connection", (socket: Socket) => {
       if (!isLoopback(socket.remoteAddress)) socket.destroy();
     });
@@ -223,6 +252,48 @@ export class GatewayServer {
   }
 
   private async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    // Body bytes held for this request. Released once, by whichever comes first: the request
+    // being finished with the body, or the response, request or socket ending or failing.
+    let held = 0;
+    let runId: string | undefined;
+    let released = false;
+    const release = () => {
+      if (released) return;
+      released = true;
+      this.inflight -= held;
+      if (runId !== undefined) {
+        const left = (this.runInflight.get(runId) ?? 0) - held;
+        if (left > 0) this.runInflight.set(runId, left);
+        else this.runInflight.delete(runId);
+      }
+      held = 0;
+    };
+    const take = (n: number): boolean => {
+      if (released) return false;
+      const mine = runId === undefined ? 0 : (this.runInflight.get(runId) ?? 0);
+      if (this.inflight + n > this.maxInflight || mine + n > this.maxRunInflight) return false;
+      this.inflight += n;
+      held += n;
+      if (runId !== undefined) this.runInflight.set(runId, mine + n);
+      return true;
+    };
+    res.once("close", release);
+    req.once("close", release);
+    req.once("error", release);
+    req.socket.once("close", release);
+    try {
+      await this.serve(req, res, (id) => (runId = id), take);
+    } finally {
+      release();
+    }
+  }
+
+  private async serve(
+    req: IncomingMessage,
+    res: ServerResponse,
+    setRun: (id: string) => void,
+    take: (n: number) => boolean,
+  ): Promise<void> {
     const started = this.now();
     // Guards. Order: who is calling, then what they ask for.
     if (!isLoopback(req.socket.remoteAddress)) return void req.socket.destroy();
@@ -242,6 +313,7 @@ export class GatewayServer {
       (typeof auth === "string" && /^bearer /i.test(auth) ? auth.slice(7).trim() : undefined);
     const run = this.tokens.verify(supplied);
     if (!run) return sendJson(res, 401, "authentication_error", "Invalid or expired run token");
+    setRun(run.runId);
 
     const q = target.indexOf("?");
     const path = q < 0 ? target : target.slice(0, q);
@@ -258,26 +330,16 @@ export class GatewayServer {
 
     let body: Buffer = Buffer.alloc(0);
     if (req.method === "POST") {
-      // Reserve the declared size (or the cap when unknown) until the response is done.
-      const declared = Number(req.headers["content-length"]);
-      const reserve =
-        Number.isFinite(declared) && declared >= 0
-          ? Math.min(declared, this.maxBody)
-          : this.maxBody;
-      if (this.inflight + reserve > this.maxInflight) {
-        return sendJson(res, 429, "rate_limit_error", "Too many requests in flight", {
-          "retry-after": "1",
-        });
-      }
-      this.inflight += reserve;
-      res.once("close", () => {
-        this.inflight -= reserve;
-      });
       try {
-        body = await readBody(req, this.maxBody);
+        body = await readBody(req, this.maxBody, take);
       } catch (err) {
         if (err instanceof TooLarge) {
           return sendJson(res, 413, "request_too_large", "Request body is too large");
+        }
+        if (err instanceof OverBudget) {
+          return sendJson(res, 429, "rate_limit_error", "Too many requests in flight", {
+            "retry-after": "1",
+          });
         }
         return void req.socket.destroy();
       }
@@ -293,6 +355,7 @@ export class GatewayServer {
     let transientRetried = false;
     let last: Buffered | undefined;
     let networkFailed = false;
+    let marks = 0;
 
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
       if (res.destroyed) return;
@@ -323,12 +386,12 @@ export class GatewayServer {
         },
         this.now(),
       );
-      this.pool.report(account.id, outcome, status);
-      // Two accounts giving the same credit/auth answer: stop, so one request marks at most two.
-      const repeated =
-        last !== undefined &&
-        (outcome.kind === "credit" || outcome.kind === "auth") &&
-        last.outcome.kind === outcome.kind;
+      // One request marks at most two accounts for credit/auth, but keeps trying the others.
+      const marking = outcome.kind === "credit" || outcome.kind === "auth";
+      if (!marking || marks < MAX_MARKS_PER_REQUEST) {
+        this.pool.report(account.id, outcome, status);
+        if (marking) marks++;
+      }
       last = { status, headers: up.res.headers, body: buffered, outcome };
       this.log({
         event: "failover",
@@ -337,7 +400,7 @@ export class GatewayServer {
         status,
         durationMs: this.now() - started,
       });
-      if (outcome.kind === "other" || repeated) break;
+      if (outcome.kind === "other") break;
       if (outcome.kind === "transient") {
         if (transientRetried) break;
         transientRetried = true;
@@ -347,6 +410,13 @@ export class GatewayServer {
     if (last && last.outcome.kind !== "other" && last.outcome.kind !== "transient") {
       // Every usable account failed: tell the client when the pool is back (429, Anthropic-shaped).
       if (this.pool.status().routable === 0) return this.exhausted(res);
+      // Accounts are left, but this request used up its attempts: do not pass a billing or auth
+      // error from one key on to the client as if the request itself were bad.
+      if (last.outcome.kind === "credit" || last.outcome.kind === "auth") {
+        return sendJson(res, 429, "rate_limit_error", "Accounts are being tried; retry", {
+          "retry-after": "1",
+        });
+      }
     }
     if (last) return this.passThrough(res, last);
     if (networkFailed) return sendJson(res, 502, "api_error", "Upstream request failed");
@@ -385,6 +455,22 @@ export class GatewayServer {
       if (value === undefined) continue;
       if (FORWARD_EXACT.has(name) || FORWARD_PREFIX.some((p) => name.startsWith(p)))
         out[name] = value;
+    }
+    // R1: a client must not be able to shape a request into an auth answer that pauses an account
+    // (an OAuth-only beta, an odd API version). Known-shaped values only; a full allow-list of
+    // beta names is deferred because Claude Code adds new ones often.
+    const version = out["anthropic-version"];
+    if (typeof version !== "string" || !KNOWN_VERSIONS.has(version)) {
+      out["anthropic-version"] = "2023-06-01";
+    }
+    const beta = out["anthropic-beta"];
+    if (beta !== undefined) {
+      const kept = (Array.isArray(beta) ? beta.join(",") : String(beta))
+        .split(",")
+        .map((t) => t.trim())
+        .filter((t) => /^[a-z0-9][a-z0-9.-]{0,63}$/.test(t) && !/oauth/.test(t));
+      if (kept.length > 0) out["anthropic-beta"] = kept.slice(0, 32).join(",");
+      else delete out["anthropic-beta"];
     }
     out["x-api-key"] = key;
     out["accept-encoding"] = "identity";

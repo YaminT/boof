@@ -73,6 +73,7 @@ export class Pool {
   private writing: Promise<void> = Promise.resolve();
   private writeError: unknown;
   private signature = "";
+  private readonly resumeSeen = new Map<string, number>();
   private adminQueue: Promise<unknown> = Promise.resolve();
   private readonly debounceMs: number;
   private timer: NodeJS.Timeout | undefined;
@@ -91,7 +92,11 @@ export class Pool {
     pool.signature = opts.store.signature();
     pool.accounts = await opts.store.loadAccounts();
     const saved = await opts.store.loadState();
-    for (const a of pool.accounts) pool.state.set(a.id, saved.get(a.id) ?? freshState());
+    for (const a of pool.accounts) {
+      pool.state.set(a.id, saved.get(a.id) ?? freshState());
+      pool.resumeSeen.set(a.id, a.resumedAt ?? 0);
+    }
+    pool.syncFlags(pool.accounts);
     return pool;
   }
 
@@ -160,28 +165,30 @@ export class Pool {
 
   async pause(id: string): Promise<boolean> {
     return this.admin(async () => {
-      this.refresh();
-      const s = this.state.get(id);
-      if (!s) return false;
-      s.paused = true;
-      s.pauseReason = "manual";
+      const { result, accounts, signature } = await this.store.update((current) => ({
+        accounts: current.map((x) => (x.id === id ? { ...x, paused: true } : x)),
+        result: current.some((x) => x.id === id),
+      }));
+      this.adopt(accounts, signature);
       await this.persistNow();
-      return true;
+      return result;
     });
   }
 
-  /** Clears a manual or auth pause and any rate-limit or credit wait. */
+  /** Clears a manual or auth pause and any rate-limit or credit wait, in every process. */
   async resume(id: string): Promise<boolean> {
     return this.admin(async () => {
-      this.refresh();
-      const s = this.state.get(id);
-      if (!s) return false;
-      s.paused = false;
-      s.pauseReason = null;
-      s.rateLimitedUntil = null;
-      s.usageExhaustedAt = null;
+      const { result, accounts, signature } = await this.store.update((current) => ({
+        accounts: current.map((x) => {
+          if (x.id !== id) return x;
+          const { paused: _paused, ...rest } = x;
+          return { ...rest, resumedAt: Math.max(this.now(), (x.resumedAt ?? 0) + 1) };
+        }),
+        result: current.some((x) => x.id === id),
+      }));
+      this.adopt(accounts, signature);
       await this.persistNow();
-      return true;
+      return result;
     });
   }
 
@@ -410,6 +417,30 @@ export class Pool {
     const ids = new Set(accounts.map((a) => a.id));
     for (const id of [...this.state.keys()]) if (!ids.has(id)) this.state.delete(id);
     for (const a of accounts) if (!this.state.has(a.id)) this.state.set(a.id, freshState());
+    this.syncFlags(accounts);
+  }
+
+  /** Apply the cross-process flags in accounts.json (manual pause, resume marker) to local state. */
+  private syncFlags(accounts: AccountRecord[]): void {
+    for (const a of accounts) {
+      const s = this.stateOf(a.id);
+      const seen = this.resumeSeen.get(a.id);
+      const stamp = a.resumedAt ?? 0;
+      if (seen !== undefined && stamp !== seen) {
+        s.paused = false;
+        s.pauseReason = null;
+        s.rateLimitedUntil = null;
+        s.usageExhaustedAt = null;
+      }
+      this.resumeSeen.set(a.id, stamp);
+      if (a.paused) {
+        s.paused = true;
+        s.pauseReason = "manual";
+      } else if (s.pauseReason === "manual") {
+        s.paused = false;
+        s.pauseReason = null;
+      }
+    }
   }
 
   /** Pick up accounts.json when another process (or an edit) changed it. A bad file keeps the old list. */

@@ -332,3 +332,29 @@ describe("consistency", () => {
     expect(saved?.requestCount).toBe(1);
   });
 });
+
+describe("manual pause across processes", () => {
+  it("a pause or resume by one Pool holds in another and survives its state writes", async () => {
+    const serve = track(await Pool.open({ store, now: clock, newId: () => "a" }));
+    await serve.add({ name: "one", apiKey: key("a") });
+    const cli = track(await Pool.open({ store: new AccountsStore(store.dir), now: clock }));
+    await cli.pause("a");
+    expect(serve.pick()).toBeNull();
+    serve.report("a", { kind: "rate_limited", until: now + 1000 }, 429);
+    await serve.flush();
+    expect(serve.accountList()[0]).toMatchObject({ paused: true, pauseReason: "manual" });
+    await cli.resume("a");
+    expect(serve.pick()?.id).toBe("a");
+    expect(serve.accountList()[0]).toMatchObject({ paused: false, rateLimitStatus: "allowed" });
+  });
+
+  it("a resume in another process clears this one's auth pause", async () => {
+    const serve = track(await Pool.open({ store, now: clock, newId: () => "a" }));
+    await serve.add({ name: "one", apiKey: key("a") });
+    serve.report("a", { kind: "auth" }, 401);
+    expect(serve.pick()).toBeNull();
+    const cli = track(await Pool.open({ store: new AccountsStore(store.dir), now: clock }));
+    await cli.resume("a");
+    expect(serve.pick()?.id).toBe("a");
+  });
+});

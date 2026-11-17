@@ -966,6 +966,34 @@ describe("RunnerEngine selection unit tests (stubbed auth, mock tools)", () => {
     delete mock.acceptsPool;
   });
 
+  it("in internal mode a tool that is not routed through the pool never waits on it", async () => {
+    const tool = engine.registry.get("mock") as {
+      acceptsPool?: boolean;
+      acceptsInternalPool?: boolean;
+    };
+    tool.acceptsPool = true;
+    tool.acceptsInternalPool = false;
+    const check = vi.fn(async () => ({ blocked: true, pool: { status: "unhealthy" } }));
+    const waitHealthy = vi.fn(async () => ({ ok: false, pool: { status: "unhealthy" } }));
+    await store.create(newTask(fm({ id: "ti" }), "x"));
+    const running = await store.transition("ti", "running");
+    const settings = effectiveSettings(await engine.settingsStore.load(), project);
+    const pipeline = new Pipeline({
+      root: projectDir,
+      store,
+      registry: engine.registry,
+      settings: { ...settings, gateway: { mode: "internal" } } as never,
+      pool: { check, waitHealthy } as never,
+    });
+    try {
+      expect((await pipeline.run(running)).kind).toBe("done");
+      expect(waitHealthy).not.toHaveBeenCalled();
+    } finally {
+      delete tool.acceptsPool;
+      delete tool.acceptsInternalPool;
+    }
+  });
+
   it("adds a Provenance section only for tasks submitted by an external client", async () => {
     await store.create(newTask(fm(), "Local."));
     await store.create(
