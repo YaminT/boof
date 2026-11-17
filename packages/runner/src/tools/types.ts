@@ -105,6 +105,8 @@ export interface Tool {
   readonly supportsResume?: boolean;
   /** True when `run` honours `RunOptions.gateway` (the tool can be served by the account pool). */
   readonly acceptsPool?: boolean;
+  /** False when the tool speaks a protocol boof's own gateway lacks (it stays outside the internal pool). */
+  readonly acceptsInternalPool?: boolean;
   /** Requires a fresh per-project Agent SDK authentication decision before running. */
   readonly needsAgentAuth?: boolean;
   /** Handles `now` injections in the current session through interrupt and streamed input. */

@@ -404,16 +404,15 @@ describe("Streaming", () => {
     expect(upstreamClosed).toBe(true);
   });
 
-  it("ends the response when the upstream drops mid-stream, without retrying", async () => {
+  it("aborts the response when the upstream drops mid-stream, without retrying", async () => {
     await boot();
     handler = (_q, res) => {
       res.writeHead(200, { "content-type": "text/event-stream" });
       res.write('data: {"type":"message_start","message":{"usage":{"input_tokens":3}}}\n\n');
       setTimeout(() => res.destroy(), 50);
     };
-    const r = await call({});
-    expect(r.status).toBe(200);
-    expect(r.body).toContain("message_start");
+    // The client must see a failure, not a clean end that looks like a complete response.
+    await expect(call({})).rejects.toThrow();
     expect(seen).toHaveLength(1);
   });
 
@@ -423,8 +422,7 @@ describe("Streaming", () => {
       res.writeHead(200, { "content-type": "text/event-stream" });
       res.write("data: {}\n\n");
     };
-    const r = await call({});
-    expect(r.status).toBe(200);
+    await expect(call({})).rejects.toThrow();
     expect(seen).toHaveLength(1);
   });
 
@@ -438,7 +436,87 @@ describe("Streaming", () => {
   });
 });
 
+describe("Limits", () => {
+  it("answers 429 when too many body bytes are in flight", async () => {
+    await boot({ maxInflightBodyBytes: 100 });
+    const held = new Promise<void>((release) => {
+      handler = (_q, res) => {
+        release();
+        setTimeout(() => res.end("{}"), 150);
+      };
+    });
+    const first = call({ body: "x".repeat(80) });
+    await held;
+    const second = await call({ body: "x".repeat(80) });
+    expect(second.status).toBe(429);
+    expect(second.headers["retry-after"]).toBe("1");
+    expect((await first).status).toBe(200);
+    // the reservation is released: a new request goes through
+    expect((await call({ body: "x".repeat(80) })).status).toBe(200);
+  });
+
+  it("ends a stream when its token is revoked mid-response", async () => {
+    await boot();
+    handler = (_q, res) => {
+      res.writeHead(200, { "content-type": "text/event-stream" });
+      res.write("data: {}\n\n");
+      setTimeout(() => res.write("data: {}\n\n"), 100);
+    };
+    const pending = call({});
+    await sleep(40);
+    tokens.revokeRun("run1");
+    await expect(pending).rejects.toThrow();
+  });
+});
+
 describe("Failover", () => {
+  const notFoundEcho: Handler = (q, res) => {
+    void q;
+    res.writeHead(404, { "content-type": "application/json" });
+    res.end(
+      JSON.stringify({
+        type: "error",
+        error: { type: "not_found_error", message: "model: claude-x reached your specified limit" },
+      }),
+    );
+  };
+
+  it("a 404 that echoes client text never pauses or exhausts an account", async () => {
+    await boot();
+    handler = notFoundEcho;
+    const r = await call({
+      body: JSON.stringify({ model: "claude-x reached your specified limit" }),
+    });
+    expect(r.status).toBe(404);
+    expect(seen).toHaveLength(1);
+    expect(pool.status().status).toBe("ok");
+  });
+
+  it("two accounts giving the same credit answer stop the failover (at most two marked)", async () => {
+    await boot({}, [KEY_A, KEY_B, "sk-ant-api03-CCCCCCCCCCCCCCCCCCCC"]);
+    handler = (_q, res) => {
+      res.writeHead(402, { "content-type": "application/json" });
+      res.end(JSON.stringify({ type: "error", error: { type: "billing_error", message: "x" } }));
+    };
+    await call({});
+    expect(seen).toHaveLength(2);
+    expect(pool.status().usageExhausted).toBe(2);
+  });
+
+  it("a 403 passes through without pausing", async () => {
+    await boot();
+    handler = (_q, res) => {
+      res.writeHead(403, { "content-type": "application/json" });
+      res.end(
+        JSON.stringify({ type: "error", error: { type: "permission_error", message: "no" } }),
+      );
+    };
+    const r = await call({});
+    expect(r.status).toBe(403);
+    expect(seen).toHaveLength(1);
+    expect(pool.status().paused).toBe(0);
+  });
+
   const rate = (retry = "30") =>
     ((_q, res) => {
       res.writeHead(429, { "content-type": "application/json", "retry-after": retry });
@@ -538,7 +616,7 @@ describe("Failover", () => {
       res.write("data: {}\n\n");
       setTimeout(() => res.destroy(), 30);
     };
-    await call({});
+    await call({}).catch(() => {});
     await sleep(100);
     expect(seen).toHaveLength(1);
     expect(pool.status().routable).toBe(2);

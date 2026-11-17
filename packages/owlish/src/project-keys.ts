@@ -137,5 +137,6 @@ export function redactSecrets(text: string, secrets: readonly string[]): string 
   for (const secret of [...variants].sort((a, b) => b.length - a.length))
     result = result.split(secret).join("[redacted]");
   result = result.replace(/sk-ant-[a-z]+\d{2}-[A-Za-z0-9_-]{8,}/g, "[redacted]");
+  result = result.replace(/bgw_[A-Za-z0-9_-]{20,}/g, "[redacted]");
   return result;
 }

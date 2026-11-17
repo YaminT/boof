@@ -131,7 +131,7 @@ export class OpencodeTool implements Tool {
     const res = await execCommand(this.bin, args, {
       launch: opts.launch ?? { kind: "direct" },
       cwd: opts.cwd,
-      env: { ...childEnv, ...gatewayEnv("opencode", opts.gateway), PWD: opts.cwd },
+      env: { ...childEnv, ...gatewayEnv("opencode", opts.gateway, childEnv), PWD: opts.cwd },
       input: this.promptText(opts),
       timeoutMs: opts.timeoutMs,
       stopSignalPath: opts.stopSignalPath,

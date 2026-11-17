@@ -294,11 +294,18 @@ export class AgentAuthResolver {
     return this.options.internal ?? sharedInternalBackend(this.options.root);
   }
 
+  /** Revoke the internal-gateway token minted for `runId`; never throws. */
+  async releaseRun(runId: string): Promise<void> {
+    await this.internal()
+      .releaseRun(runId)
+      .catch(() => {});
+  }
+
   /** `runId` binds an internal-gateway token to the run, so it is revoked when the run ends. */
   async credentials(
     project: Project,
     decision: AgentAuthDecision & { ok: true },
-    runId?: string,
+    runId: string,
   ): Promise<AgentAuth> {
     if (decision.via === "project-key") {
       try {
@@ -319,7 +326,7 @@ export class AgentAuthResolver {
     ) {
       try {
         const g = await this.internal().childGateway({
-          runId: runId ?? `agent-${project.id}`,
+          runId,
           projectId: project.id,
         });
         return { kind: "gateway", url: g.url, apiKey: g.apiKey };

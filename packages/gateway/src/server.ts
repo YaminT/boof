@@ -16,6 +16,8 @@ import { UsageTap } from "./usage-tap.js";
 /** The only upstream. Tests may point `upstreamOrigin` at a fake; it is not a setting. */
 export const UPSTREAM_ORIGIN = "https://api.anthropic.com";
 export const MAX_BODY_BYTES = 32 * 1024 * 1024;
+/** All request bodies being buffered at once, across tokens. */
+export const MAX_INFLIGHT_BODY_BYTES = 128 * 1024 * 1024;
 const MAX_ATTEMPTS = 3;
 const MAX_ERROR_BODY = 1024 * 1024;
 
@@ -68,6 +70,8 @@ export interface GatewayServerOptions {
   /** Environment read for HTTPS_PROXY / NO_PROXY (D7). Default `process.env`; tests pass their own. */
   env?: Record<string, string | undefined>;
   maxBodyBytes?: number;
+  /** Cap on request bytes held in memory at once; default 128 MiB. */
+  maxInflightBodyBytes?: number;
   connectTimeoutMs?: number;
   headersTimeoutMs?: number;
   idleTimeoutMs?: number;
@@ -138,6 +142,8 @@ export class GatewayServer {
   private readonly origin: URL;
   private readonly agent: http.Agent;
   private readonly maxBody: number;
+  private readonly maxInflight: number;
+  private inflight = 0;
   private readonly connectMs: number;
   private readonly headersMs: number;
   private readonly idleMs: number;
@@ -158,6 +164,7 @@ export class GatewayServer {
           : new https.Agent({ keepAlive: true })
         : new http.Agent({ keepAlive: true });
     this.maxBody = opts.maxBodyBytes ?? MAX_BODY_BYTES;
+    this.maxInflight = opts.maxInflightBodyBytes ?? MAX_INFLIGHT_BODY_BYTES;
     this.connectMs = opts.connectTimeoutMs ?? 10_000;
     this.headersMs = opts.headersTimeoutMs ?? 10 * 60_000;
     this.idleMs = opts.idleTimeoutMs ?? 5 * 60_000;
@@ -198,6 +205,7 @@ export class GatewayServer {
     const server = this.server;
     this.server = null;
     this.agent.destroy();
+    await this.pool.flush().catch(() => {});
     if (!server) return;
     await new Promise<void>((resolve) => {
       server.close(() => resolve());
@@ -250,6 +258,21 @@ export class GatewayServer {
 
     let body: Buffer = Buffer.alloc(0);
     if (req.method === "POST") {
+      // Reserve the declared size (or the cap when unknown) until the response is done.
+      const declared = Number(req.headers["content-length"]);
+      const reserve =
+        Number.isFinite(declared) && declared >= 0
+          ? Math.min(declared, this.maxBody)
+          : this.maxBody;
+      if (this.inflight + reserve > this.maxInflight) {
+        return sendJson(res, 429, "rate_limit_error", "Too many requests in flight", {
+          "retry-after": "1",
+        });
+      }
+      this.inflight += reserve;
+      res.once("close", () => {
+        this.inflight -= reserve;
+      });
       try {
         body = await readBody(req, this.maxBody);
       } catch (err) {
@@ -272,6 +295,7 @@ export class GatewayServer {
     let networkFailed = false;
 
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      if (res.destroyed) return;
       const account = this.pool.pick(tried);
       if (!account) break;
       tried.push(account.id);
@@ -288,7 +312,7 @@ export class GatewayServer {
       networkFailed = false;
       const status = up.res.statusCode ?? 502;
       if (status < 400) {
-        return this.stream(up.res, res, account.id, run.runId, route.usage, started);
+        return this.stream(up.res, res, account.id, run.runId, route.usage, started, supplied);
       }
       const buffered = await this.bufferError(up.res);
       const outcome = classify(
@@ -300,6 +324,11 @@ export class GatewayServer {
         this.now(),
       );
       this.pool.report(account.id, outcome, status);
+      // Two accounts giving the same credit/auth answer: stop, so one request marks at most two.
+      const repeated =
+        last !== undefined &&
+        (outcome.kind === "credit" || outcome.kind === "auth") &&
+        last.outcome.kind === outcome.kind;
       last = { status, headers: up.res.headers, body: buffered, outcome };
       this.log({
         event: "failover",
@@ -308,7 +337,7 @@ export class GatewayServer {
         status,
         durationMs: this.now() - started,
       });
-      if (outcome.kind === "other") break;
+      if (outcome.kind === "other" || repeated) break;
       if (outcome.kind === "transient") {
         if (transientRetried) break;
         transientRetried = true;
@@ -437,6 +466,7 @@ export class GatewayServer {
     runId: string,
     countUsage: boolean,
     started: number,
+    token: string | undefined,
   ): void {
     const status = up.statusCode ?? 200;
     const tap = countUsage ? new UsageTap(up.headers["content-type"]) : undefined;
@@ -450,6 +480,7 @@ export class GatewayServer {
     };
     arm();
     let finished = false;
+    let complete = false;
     const finish = () => {
       if (finished) return;
       finished = true;
@@ -465,14 +496,21 @@ export class GatewayServer {
         inputTokens: usage?.inputTokens,
         outputTokens: usage?.outputTokens,
       });
-      // An upstream that dropped mid-stream ends the response here; the client retries itself.
-      if (!res.writableEnded) res.end();
+      // An upstream that dropped mid-stream must not look like a complete response.
+      if (res.writableEnded) return;
+      if (complete) res.end();
+      else res.destroy();
     };
     up.on("data", (chunk: Buffer) => {
+      // A token revoked or expired mid-stream ends the stream.
+      if (!this.tokens.verify(token)) return void up.destroy(new Error("run token ended"));
       arm();
       tap?.write(chunk);
     });
-    up.on("end", finish);
+    up.on("end", () => {
+      complete = true;
+      finish();
+    });
     up.on("error", finish);
     up.on("aborted", finish);
     up.on("close", finish);

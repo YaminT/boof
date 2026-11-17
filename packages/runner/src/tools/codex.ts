@@ -111,6 +111,8 @@ export class CodexTool implements Tool {
 
   readonly supportsResume = true;
   readonly acceptsPool = true;
+  /** The internal gateway serves the Anthropic API only; codex keeps its own OpenAI login. */
+  readonly acceptsInternalPool = false;
 
   /**
    * Argument vector for `codex exec`, last entry `-`: the prompt is read from stdin. With `resumeSessionId` it is

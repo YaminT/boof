@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { chmod, mkdir, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import {
@@ -201,9 +202,14 @@ export class ClaudeConcierge implements ConciergeAgent {
     if (!executable.path && executable.source !== "sdk")
       throw new ConciergeTurnError(executable.reason ?? BINARY_MESSAGE, "refused", null, null);
 
-    let credentials;
+    let credentials: Awaited<ReturnType<AgentAuthResolver["credentials"]>> | undefined;
+    // One run id per turn: its internal-gateway token is revoked when the turn ends.
+    const runId = `concierge-turn-${randomBytes(8).toString("hex")}`;
+    const releaseToken = () => {
+      if (credentials?.kind === "gateway") void this.auth.releaseRun(runId);
+    };
     try {
-      credentials = await this.auth.credentials(input.project, decision);
+      credentials = await this.auth.credentials(input.project, decision, runId);
     } catch (error) {
       const message = messageOf(error);
       throw new ConciergeTurnError(
@@ -244,6 +250,7 @@ export class ClaudeConcierge implements ConciergeAgent {
       );
     } catch (error) {
       releaseScratch();
+      releaseToken();
       throw new ConciergeTurnError(
         redactSecrets(messageOf(error), credentials.apiKey ? [credentials.apiKey] : []),
         "failed",
@@ -292,6 +299,7 @@ export class ClaudeConcierge implements ConciergeAgent {
       query = sdk.query({ prompt: input.prompt, options });
     } catch (error) {
       releaseScratch();
+      releaseToken();
       throw new ConciergeTurnError(redact(messageOf(error)), "failed", null, null);
     }
     let queryClosed = false;
@@ -441,6 +449,7 @@ export class ClaudeConcierge implements ConciergeAgent {
       redactor.flush();
       clearTimeout(deadline);
       releaseScratch();
+      releaseToken();
       input.signal?.removeEventListener("abort", onAbort);
       closeQuery();
     }
