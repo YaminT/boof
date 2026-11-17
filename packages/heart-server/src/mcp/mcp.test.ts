@@ -325,6 +325,7 @@ describe("tools generated from the registry", () => {
         "boof_set_account_thresholds",
         "boof_add_account",
         "boof_remove_account",
+        "boof_import_accounts",
         "boof_list_webhooks",
         "boof_create_webhook",
         "boof_update_webhook",
@@ -341,7 +342,7 @@ describe("tools generated from the registry", () => {
       (o) => (!o.rest.kind || o.rest.kind === "json") && o.mcp.expose,
     );
     expect(names).toHaveLength(jsonOps.length);
-    expect(names).toHaveLength(87);
+    expect(names).toHaveLength(88);
     const scopesByTool = Object.fromEntries(
       exposedOps(await import("../api/index.js").then((m) => m.registry)).map((o) => [
         o.mcp.name,

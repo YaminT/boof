@@ -90,6 +90,7 @@ describe("UI coverage of the operations", () => {
         "settings.models",
         "accounts.add",
         "accounts.remove",
+        "accounts.import",
       ]
     `);
   });

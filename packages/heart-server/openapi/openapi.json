@@ -3911,6 +3911,111 @@
         "x-mcp-tool": "boof_get_pool_health"
       }
     },
+    "/accounts/import": {
+      "post": {
+        "description": "One-time import of the Anthropic API-key accounts (provider claude-console-api) of a better-ccflare database into boof's internal account pool. The database is opened read-only. Subscription (OAuth) and Codex accounts are not imported: they are listed as skipped with the reason. Inputs: source (better-ccflare), optional path (default ~/.config/better-ccflare/better-ccflare.db). Returns the imported names and the skipped accounts; no key is ever returned. Needs settings:write and a trusted, project-unrestricted client. 409 not_supported unless settings.gateway.mode is internal; 400 when the database cannot be read.",
+        "operationId": "accounts.import",
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "path": {
+                    "maxLength": 1000,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "source": {
+                    "const": "better-ccflare",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "source"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "imported": {
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "name": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "name"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    },
+                    "skipped": {
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "name": {
+                            "type": "string"
+                          },
+                          "provider": {
+                            "type": "string"
+                          },
+                          "reason": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "name",
+                          "provider",
+                          "reason"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    }
+                  },
+                  "required": [
+                    "imported",
+                    "skipped"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Import API-key accounts from better-ccflare",
+        "tags": [
+          "accounts"
+        ],
+        "x-boof-scope": "settings:write",
+        "x-mcp-tool": "boof_import_accounts"
+      }
+    },
     "/actions": {
       "get": {
         "description": "Lists tasks parked with questions across the projects the client may access. No input. No side effects.",
@@ -4668,6 +4773,10 @@
                             "type": "string"
                           },
                           "message": {
+                            "type": "string"
+                          },
+                          "note": {
+                            "description": "A one-line rule that applies whatever the result (the account pool terms note).",
                             "type": "string"
                           },
                           "status": {

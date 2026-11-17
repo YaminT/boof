@@ -201,7 +201,7 @@ Fix errors this way:
 Boof has two ways to call the same operations. Both use the same scopes, trust rules, validation and error codes.
 
 - REST over HTTP under `$BOOF_URL/api/v1`. It always works. This guide shows curl commands.
-- MCP (Model Context Protocol). If your host supports MCP, MCP gives you typed tools. There are 87 tools, named `boof_<verb>_<noun>`. The full list is below. Each REST operation in section 7 lists its MCP tool, if it has one. Every operation has a tool except attachment upload and download, which are REST only. `tools/list` shows only the tools your scopes allow, and a call outside them answers `forbidden_scope`.
+- MCP (Model Context Protocol). If your host supports MCP, MCP gives you typed tools. There are 88 tools, named `boof_<verb>_<noun>`. The full list is below. Each REST operation in section 7 lists its MCP tool, if it has one. Every operation has a tool except attachment upload and download, which are REST only. `tools/list` shows only the tools your scopes allow, and a call outside them answers `forbidden_scope`.
 
 ### MCP over HTTP (remote)
 
@@ -272,7 +272,7 @@ curl -sS "$BOOF_URL/mcp" -H "Authorization: Bearer $BOOF_KEY" \
 
 The reply to a request with an `id` is one JSON-RPC message: `{"jsonrpc":"2.0","id":3,"result":{...}}` or `{"jsonrpc":"2.0","id":3,"error":{"code":...,"message":"..."}}`. The reply may come as `Content-Type: application/json` (the body is the message) or as `Content-Type: text/event-stream` (the body is `event: message` and `data: <json>` lines). Parse by the `Content-Type` header. For a stream, take the `data:` line and parse its JSON. The current server answers with `application/json`; a client library handles both.
 
-Tools (87). Arguments that name a project use `projectId`; plan tools use `planId`; task tools use `taskId`. Section 7 lists the arguments of each tool.
+Tools (88). Arguments that name a project use `projectId`; plan tools use `planId`; task tools use `taskId`. Section 7 lists the arguments of each tool.
 
 | Area                       | Tools                                                                                                                                                                                                                                                                                                                                                                                         |
 | -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -286,7 +286,7 @@ Tools (87). Arguments that name a project use `projectId`; plan tools use `planI
 | Command templates          | `boof_list_commands`, `boof_create_command`, `boof_update_command`, `boof_delete_command`                                                                                                                                                                                                                                                                                                     |
 | API clients                | `boof_list_clients`, `boof_create_client`, `boof_revoke_client`, `boof_rotate_client`                                                                                                                                                                                                                                                                                                         |
 | Webhooks                   | `boof_list_webhooks`, `boof_create_webhook`, `boof_update_webhook`, `boof_delete_webhook`                                                                                                                                                                                                                                                                                                     |
-| Account pool               | `boof_list_accounts`, `boof_get_agent_sdk_eligibility`, `boof_get_pool_health`, `boof_pause_account`, `boof_resume_account`, `boof_set_account_priority`, `boof_set_account_thresholds`, `boof_add_account`, `boof_remove_account`                                                                                                                                                            |
+| Account pool               | `boof_list_accounts`, `boof_get_agent_sdk_eligibility`, `boof_get_pool_health`, `boof_pause_account`, `boof_resume_account`, `boof_set_account_priority`, `boof_set_account_thresholds`, `boof_add_account`, `boof_remove_account`, `boof_import_accounts`                                                                                                                                    |
 | n8n                        | `boof_get_n8n`, `boof_update_n8n`, `boof_delete_n8n`, `boof_list_n8n_workflows`, `boof_refresh_n8n_workflows`                                                                                                                                                                                                                                                                                 |
 
 MCP results: `result.content[0].text` is a one-line summary. `result.content[1].text` is the JSON. `result.structuredContent` is the result object. A failure has `result.isError: true` and the text `<error_code>: <message> <details-json>`. The error codes are the codes in section 5.
@@ -669,7 +669,7 @@ These need no key:
 
 This section is generated from the operations registry. Do not edit it by hand.
 
-There are 97 operations. Every path below starts with `/api/v1`.
+There are 98 operations. Every path below starts with `/api/v1`.
 Every operation can also fail with `401 unauthenticated`, `413 payload_too_large`, `421 host_not_allowed`, `429 rate_limited` and `500 internal`.
 
 ### Shared object shapes
@@ -693,6 +693,7 @@ Types named below: `kebab-id` is a string that matches `^[a-z0-9]+(-[a-z0-9]+)*$
 - `paused`: `boolean`, required; default `false`
 - `planDefaults`: `{ dontRules: string, doRules: string, stack: string, testCommand: string }`, optional
 - `planWriteBack`: `boolean`, required; default `true`
+- `profile`: `kebab-id`, optional
 - `retries`: `{ backoffMs?: (integer >= 0)[], idleTimeoutMs?: integer, transient?: integer >= 0 }`, optional
 - `review`: `{ gate?: boolean, maxFixRounds?: integer >= 0, maxInlineDiffBytes?: integer }`, optional
 - `roles`: `{ developer?: { model: string, tool: string }, observer?: { model: string, tool: string }, planner?: { model: string, tool: string }, reviewer?: { model: string, tool: string } }`, optional
@@ -725,6 +726,7 @@ Types named below: `kebab-id` is a string that matches `^[a-z0-9]+(-[a-z0-9]+)*$
 - `command`: `kebab-id | null`, required; default `null`
 - `completedRuns`: `integer >= 0`, required; default `0`
 - `created`: `ISO-8601 string`, required
+- `draftFor`: `{ planId: kebab-id, planVersion: integer >= 0 }`, optional
 - `epicId`: `kebab-id`, optional
 - `id`: `kebab-id`, required
 - `labels`: `string[]`, required; default `[]`
@@ -882,6 +884,20 @@ Path parameters (all required):
 
 ### Projects
 
+#### `GET /api/v1/projects/{projectId}/detect-stack` (Guess a project's stack and test command)
+
+- Operation: `projects.detectStack`
+- Scope: `projects:read`
+- MCP tool: none (REST only)
+- CLI: `boof-runner projects detect-stack`
+- What it does: Reads a few well-known files of the project directory (package.json, lockfiles, pyproject.toml, Cargo.toml, go.mod; each at most 256 KB, never outside the directory) and reports a guessed stack and test command for the plan wizard. No model, no network, no side effects.
+- Success: HTTP 200 with `{ detected: string[], stack: string, testCommand: string }`.
+- Errors: `403 forbidden_scope`, `403 forbidden_project`, `404 project_not_found`, `400 invalid_input`
+
+Path parameters (all required):
+
+- `projectId`: `kebab-id`, required; Project id (kebab-case)
+
 #### `GET /api/v1/projects` (List projects)
 
 - Operation: `projects.list`
@@ -889,7 +905,7 @@ Path parameters (all required):
 - MCP tool: `boof_list_projects`
 - CLI: `boof-runner projects list`
 - What it does: Lists the registered projects the client may access. Optional includeArchived adds archived ones. No side effects.
-- Success: HTTP 200 with `{ projects: { anthropicApiKeySet: boolean, archived: boolean, brief?: string, budget?: object, claudeAgent?: object, created: ISO-8601 string, currentBranch: string | null, defaultBase?: string, externalSteps?: object[], id: kebab-id, labels: string[], name: string, origin: object, paused: boolean, planDefaults?: object, planWriteBack: boolean, retries?: object, review?: object, roles?: object, updated: ISO-8601 string, workingDirectory: string, worktree?: object }[] }`.
+- Success: HTTP 200 with `{ projects: { anthropicApiKeySet: boolean, archived: boolean, brief?: string, budget?: object, claudeAgent?: object, created: ISO-8601 string, currentBranch: string | null, defaultBase?: string, externalSteps?: object[], id: kebab-id, labels: string[], name: string, origin: object, paused: boolean, planDefaults?: object, planWriteBack: boolean, profile?: kebab-id, retries?: object, review?: object, roles?: object, updated: ISO-8601 string, workingDirectory: string, worktree?: object }[] }`.
 - Errors: `403 forbidden_scope`, `400 invalid_input`
 
 Query parameters:
@@ -930,7 +946,7 @@ JSON body (unknown keys are rejected):
 - MCP tool: `boof_get_project`
 - CLI: `boof-runner projects get`
 - What it does: Returns one project by id, with currentBranch (the branch checked out in its working directory, null when detached). Input: projectId. No side effects.
-- Success: HTTP 200 with `{ anthropicApiKeySet: boolean, archived: boolean, brief?: string, budget?: { onExceed?: "pause" | "fail", perProjectDayUsd?: number, perTaskUsd?: number, perToolDayUsd?: { [key: string]: number } }, claudeAgent?: { auth: "gateway" | "project-key" }, created: ISO-8601 string, currentBranch: string | null, defaultBase?: string, externalSteps?: { at: "after-planner" | "after-developer" | "after-review", id: kebab-id, label: string, onFailure: "fail" | "continue", sendDiff: boolean, timeoutMs?: integer 10000..86400000, webhookPath: string, workflowId: string }[], id: kebab-id, labels: string[], name: string, origin: { client?: string, kind: "ui" | "cli" | "api" | "migration" }, paused: boolean, planDefaults?: { dontRules: string, doRules: string, stack: string, testCommand: string }, planWriteBack: boolean, retries?: { backoffMs?: (integer >= 0)[], idleTimeoutMs?: integer, transient?: integer >= 0 }, review?: { gate?: boolean, maxFixRounds?: integer >= 0, maxInlineDiffBytes?: integer }, roles?: { developer?: object, observer?: object, planner?: object, reviewer?: object }, updated: ISO-8601 string, workingDirectory: string, worktree?: { onDone?: "keep-branch" | "keep" | "delete", onFailure?: "keep" | "delete", root?: string } }`. The response has an `ETag` header.
+- Success: HTTP 200 with `{ anthropicApiKeySet: boolean, archived: boolean, brief?: string, budget?: { onExceed?: "pause" | "fail", perProjectDayUsd?: number, perTaskUsd?: number, perToolDayUsd?: { [key: string]: number } }, claudeAgent?: { auth: "gateway" | "project-key" }, created: ISO-8601 string, currentBranch: string | null, defaultBase?: string, externalSteps?: { at: "after-planner" | "after-developer" | "after-review", id: kebab-id, label: string, onFailure: "fail" | "continue", sendDiff: boolean, timeoutMs?: integer 10000..86400000, webhookPath: string, workflowId: string }[], id: kebab-id, labels: string[], name: string, origin: { client?: string, kind: "ui" | "cli" | "api" | "migration" }, paused: boolean, planDefaults?: { dontRules: string, doRules: string, stack: string, testCommand: string }, planWriteBack: boolean, profile?: kebab-id, retries?: { backoffMs?: (integer >= 0)[], idleTimeoutMs?: integer, transient?: integer >= 0 }, review?: { gate?: boolean, maxFixRounds?: integer >= 0, maxInlineDiffBytes?: integer }, roles?: { developer?: object, observer?: object, planner?: object, reviewer?: object }, updated: ISO-8601 string, workingDirectory: string, worktree?: { onDone?: "keep-branch" | "keep" | "delete", onFailure?: "keep" | "delete", root?: string } }`. The response has an `ETag` header.
 - Errors: `403 forbidden_scope`, `403 forbidden_project`, `404 project_not_found`, `400 invalid_input`
 
 Path parameters (all required):
@@ -944,7 +960,7 @@ Path parameters (all required):
 - MCP tool: `boof_update_project`
 - CLI: `boof-runner projects update`
 - What it does: Changes project fields (name, brief, workingDirectory, paused, labels, per-project overrides; null clears an override). Inputs: projectId plus the fields to change. Rewrites project.json. externalSteps (n8n steps; null clears them) send task content to n8n, so a review-trust client gets 403 forbidden_trust.
-- Success: HTTP 200 with `{ anthropicApiKeySet: boolean, archived: boolean, brief?: string, budget?: { onExceed?: "pause" | "fail", perProjectDayUsd?: number, perTaskUsd?: number, perToolDayUsd?: { [key: string]: number } }, claudeAgent?: { auth: "gateway" | "project-key" }, created: ISO-8601 string, defaultBase?: string, externalSteps?: { at: "after-planner" | "after-developer" | "after-review", id: kebab-id, label: string, onFailure: "fail" | "continue", sendDiff: boolean, timeoutMs?: integer 10000..86400000, webhookPath: string, workflowId: string }[], id: kebab-id, labels: string[], name: string, origin: { client?: string, kind: "ui" | "cli" | "api" | "migration" }, paused: boolean, planDefaults?: { dontRules: string, doRules: string, stack: string, testCommand: string }, planWriteBack: boolean, retries?: { backoffMs?: (integer >= 0)[], idleTimeoutMs?: integer, transient?: integer >= 0 }, review?: { gate?: boolean, maxFixRounds?: integer >= 0, maxInlineDiffBytes?: integer }, roles?: { developer?: object, observer?: object, planner?: object, reviewer?: object }, updated: ISO-8601 string, workingDirectory: string, worktree?: { onDone?: "keep-branch" | "keep" | "delete", onFailure?: "keep" | "delete", root?: string } }`. The response has an `ETag` header.
+- Success: HTTP 200 with `{ anthropicApiKeySet: boolean, archived: boolean, brief?: string, budget?: { onExceed?: "pause" | "fail", perProjectDayUsd?: number, perTaskUsd?: number, perToolDayUsd?: { [key: string]: number } }, claudeAgent?: { auth: "gateway" | "project-key" }, created: ISO-8601 string, defaultBase?: string, externalSteps?: { at: "after-planner" | "after-developer" | "after-review", id: kebab-id, label: string, onFailure: "fail" | "continue", sendDiff: boolean, timeoutMs?: integer 10000..86400000, webhookPath: string, workflowId: string }[], id: kebab-id, labels: string[], name: string, origin: { client?: string, kind: "ui" | "cli" | "api" | "migration" }, paused: boolean, planDefaults?: { dontRules: string, doRules: string, stack: string, testCommand: string }, planWriteBack: boolean, profile?: kebab-id, retries?: { backoffMs?: (integer >= 0)[], idleTimeoutMs?: integer, transient?: integer >= 0 }, review?: { gate?: boolean, maxFixRounds?: integer >= 0, maxInlineDiffBytes?: integer }, roles?: { developer?: object, observer?: object, planner?: object, reviewer?: object }, updated: ISO-8601 string, workingDirectory: string, worktree?: { onDone?: "keep-branch" | "keep" | "delete", onFailure?: "keep" | "delete", root?: string } }`. The response has an `ETag` header.
 - Header `If-Match`: The ETag of GET /projects/{projectId} you last saw, e.g. W/"2026-10-01T00:00:00.000Z". A project that changed since answers 409 project_modified.
 - Errors: `403 forbidden_scope`, `403 forbidden_project`, `404 project_not_found`, `400 invalid_input`, `409 project_modified`, `400 not_a_git_repo`, `403 forbidden_trust`, `403 project_root_not_allowed`
 
@@ -967,6 +983,7 @@ JSON body (unknown keys are rejected):
 - `paused`: `boolean`, optional
 - `planDefaults`: `{ dontRules?: string, doRules?: string, stack?: string, testCommand?: string } | null`, optional
 - `planWriteBack`: `boolean`, optional
+- `profile`: `kebab-id | null`, optional
 - `retries`: `{ backoffMs?: (integer >= 0)[], idleTimeoutMs?: integer, transient?: integer >= 0 } | null`, optional
 - `review`: `{ gate?: boolean, maxFixRounds?: integer >= 0, maxInlineDiffBytes?: integer } | null`, optional
 - `roles`: `{ developer?: { model: string, tool: string }, observer?: { model: string, tool: string }, planner?: { model: string, tool: string }, reviewer?: { model: string, tool: string } } | null`, optional
@@ -1109,13 +1126,34 @@ JSON body (unknown keys are rejected):
 - MCP tool: `boof_get_plan`
 - CLI: `boof-runner plans get`
 - What it does: Returns a plan with all goals, its version and mergeOrder (the final task branch of each goal in topological plan order). Inputs: projectId, planId. No side effects.
-- Success: HTTP 200 with `{ approvedBy?: { at: ISO-8601 string, principalId: string, version: integer >= 1 }, autoSync: boolean, bumpTo: "review" | "done", created: ISO-8601 string, description: string, goals: Goal[], id: kebab-id, mergeOrder: { branch: string, goalId: string, taskId: string }[], source: { client?: string, importedFrom?: string, kind: "ui" | "api" | "mcp" | "repo-import" }, status: "draft" | "active" | "archived", title: string, updated: ISO-8601 string, version: integer >= 1 }`. The response has an `ETag` header.
+- Success: HTTP 200 with `{ approvedBy?: { at: ISO-8601 string, principalId: string, version: integer >= 1 }, autoSync: boolean, bumpTo: "review" | "done", created: ISO-8601 string, description: string, draftTask?: { id: string, status: string }, goals: Goal[], id: kebab-id, mergeOrder: { branch: string, goalId: string, taskId: string }[], source: { client?: string, importedFrom?: string, kind: "ui" | "api" | "mcp" | "repo-import" }, status: "draft" | "active" | "archived", title: string, updated: ISO-8601 string, version: integer >= 1 }`. The response has an `ETag` header.
 - Errors: `403 forbidden_scope`, `403 forbidden_project`, `404 project_not_found`, `404 plan_not_found`, `400 invalid_input`
 
 Path parameters (all required):
 
 - `projectId`: `kebab-id`, required; Project id (kebab-case)
 - `planId`: `kebab-id`, required; Plan id (kebab-case)
+
+#### `POST /api/v1/projects/{projectId}/plans/{planId}/draft` (Have an agent draft the goals of a plan)
+
+- Operation: `plans.draftGoals`
+- Scope: `tasks:write`
+- MCP tool: none (REST only)
+- CLI: `boof-runner plans draft-goals`
+- What it does: Queues a plan-draft task: the chosen tool reads the repository and writes the goals of a draft plan, which replace the plan's goals when the task finishes (only if the plan is still the same draft). Inputs: projectId, planId, tool, model, optional note. Refused with 409 draft_in_progress while another draft task of the plan is pending, running or waiting for answers, 400 tool_not_installed for a tool that is not installed, 409 plan_not_draft for a plan that is not a draft. Needs tasks:write and plans:write. Review-trust clients are refused.
+- Success: HTTP 202 with `{ plan: Plan, task: { id: string, status: string } }`.
+- Errors: `403 forbidden_scope`, `403 forbidden_project`, `404 project_not_found`, `404 plan_not_found`, `400 invalid_plan`
+
+Path parameters (all required):
+
+- `projectId`: `kebab-id`, required; Project id (kebab-case)
+- `planId`: `kebab-id`, required; Plan id (kebab-case)
+
+JSON body (unknown keys are rejected):
+
+- `model`: `string`, required; max length 200
+- `note`: `string`, optional; max length 4000
+- `tool`: `string`, required; max length 100
 
 #### `PUT /api/v1/projects/{projectId}/plans/{planId}` (Update a plan)
 
@@ -1869,6 +1907,7 @@ Query parameters:
 
 JSON body (unknown keys are rejected):
 
+- `activeProfile`: `kebab-id | null`, optional
 - `budget`: `{ onExceed?: "pause" | "fail", perDayUsd?: number, perProjectDayUsd?: number, perTaskUsd?: number, perToolDayUsd?: { [key: string]: number }, timezone?: string }`, optional
 - `defaultProject`: `kebab-id | null`, optional
 - `expectedUpdated`: `string`, optional; The settings ETag you last saw (HTTP: If-Match). A stale value is refused with 409 settings_modified. Omit it for an unconditional write; max length 100
@@ -1877,11 +1916,13 @@ JSON body (unknown keys are rejected):
 - `owlish`: `{ healthGate?: "pause" | "warn" | "off", url: string } | null`, optional
 - `owlishAgentKey`: `string | null`, optional; An api-only better-ccflare key that claude-agent processes receive as ANTHROPIC_API_KEY; boof keeps the admin client key to itself. Write-only: stored beside the client key (owlish/secrets.json, mode 0600) and never returned. null removes the stored key (BOOF_OWLISH_AGENT_KEY, when set, still wins)
 - `owlishApiKey`: `string | null`, optional; boof's better-ccflare client key. Write-only: stored apart from settings.json (owlish/secrets.json, mode 0600) and never returned. null removes the stored key (BOOF_OWLISH_API_KEY, when set, still wins)
+- `profiles`: `{ id: kebab-id, maxFixRounds?: integer 0..10, name: string, roles: { developer: object, observer?: object | null, planner: object | null, reviewer: object | null } }[]`, optional; max 20 item(s)
 - `projectsRoot`: `string | null`, optional
 - `retries`: `{ backoffMs?: (integer >= 0)[], idleTimeoutMs?: integer, poolWaitMs?: integer, transient?: integer >= 0 }`, optional
 - `review`: `{ gate?: boolean, maxFixRounds?: integer >= 0, maxInlineDiffBytes?: integer }`, optional
 - `roles`: `{ developer: { model: string, tool: string }, observer?: { model: string, tool: string }, planner: { model: string, tool: string }, reviewer: { model: string, tool: string } }`, optional
-- `runner`: `{ agentEnv?: string[], concurrency?: integer >= 1, enabled?: boolean, inheritMcpServers?: boolean }`, optional
+- `runner`: `{ agentEnv?: string[], concurrency?: integer >= 1, enabled?: boolean, inheritMcpServers?: boolean, sandbox?: { denyTcpPorts?: (integer 1..65535)[], mode?: "off" | "enforce", readPaths?: string[], writePaths?: string[] } }`, optional
+- `updates`: `{ check: boolean }`, optional
 - `worktree`: `{ onDone?: "keep-branch" | "keep" | "delete", onFailure?: "keep" | "delete", root?: string }`, optional
 
 #### `GET /api/v1/health` (Tool health)
@@ -1967,7 +2008,7 @@ JSON body (unknown keys are rejected):
 - MCP tool: `boof_get_runner`
 - CLI: `boof-runner runner status`
 - What it does: Returns whether the runner is enabled and its concurrency. No input. No side effects.
-- Success: HTTP 200 with `{ agentAuth: { allowed: boolean, projectId: string, reason: string | null, roles: ("planner" | "developer" | "observer" | "reviewer")[], via: "gateway" | "project-key" | null }[], budgetExceeded: { exceeded: boolean, limitUsd: number | null, remainingUsd: number | null, scope: string, spentUsd: number }[], concurrency: integer, enabled: boolean, pool: { configured: integer | null, nextAvailableAt: string | null, paused: integer | null, rateLimited: integer | null, reason: string | null, routable: integer | null, status: "absent" | "unreachable" | "ok" | "degraded" | "unhealthy", usageExhausted: integer | null } }`.
+- Success: HTTP 200 with `{ agentAuth: { allowed: boolean, projectId: string, reason: string | null, roles: ("planner" | "developer" | "observer" | "reviewer")[], via: "gateway" | "project-key" | null }[], budgetExceeded: { exceeded: boolean, limitUsd: number | null, remainingUsd: number | null, scope: string, spentUsd: number }[], concurrency: integer, enabled: boolean, pool: { configured: integer | null, nextAvailableAt: string | null, paused: integer | null, rateLimited: integer | null, reason: string | null, routable: integer | null, status: "absent" | "unreachable" | "ok" | "degraded" | "unhealthy", usageExhausted: integer | null }, sandbox: { backend: "none" | "linux" | "darwin", mode: "off" | "enforce", offer: boolean, reason: string, state: "off" | "ok" | "unavailable" } }`.
 - Errors: `403 forbidden_scope`
 
 #### `GET /api/v1/runner/status` (Runner and queue status)
@@ -2065,6 +2106,23 @@ JSON body (unknown keys are rejected):
 Path parameters (all required):
 
 - `commandId`: `kebab-id`, required; Command template id
+
+### harnesses
+
+#### `GET /api/v1/harnesses` (Installed coding agents)
+
+- Operation: `harnesses.status`
+- Scope: `settings:read`
+- MCP tool: none (REST only)
+- CLI: `boof-runner harnesses status`
+- What it does: Reports which coding-agent tools (harnesses) are installed on the computer that runs boof: for each tool whether it was found, its version and path, and whether it was found off PATH (foundOffPath). Also anyInstalled. Free: it looks for the program and asks it for `--version`; it never sends a prompt. The result is cached for five minutes; `refresh` re-checks (at most once every ten seconds). With `forProject` (a project id), a tool that is installed but cannot start for that project carries startBlock, the reason. Needs settings:read.
+- Success: HTTP 200 with `{ anyInstalled: boolean, anyReady: boolean, checkedAt: string, checks: { fixHint?: string, fixPage?: "agents" | "gateway" | "projects" | "sandbox" | "general", id: "agents" | "gateway" | "projectsRoot" | "git" | "dataRoot" | "sandbox", label: string, message: string, note?: string, status: "pass" | "warn" | "fail" }[], gateway: { message: string, status: "absent" | "unreachable" | "ok" | "degraded" | "unhealthy" }, tools: { [key: string]: { displayName: string, fixHint?: string, fixPage?: "agents" | "gateway" | "projects" | "sandbox" | "general", foundOffPath?: string, installed: boolean, message: string, path?: string, ready: boolean, readyReason: string, startBlock?: string, version?: string } } }`.
+- Errors: `403 forbidden_scope`, `400 invalid_input`
+
+Query parameters:
+
+- `refresh`: `boolean`, optional
+- `forProject`: `string`, optional
 
 ### Account pool (better-ccflare)
 
@@ -2199,6 +2257,21 @@ JSON body (unknown keys are rejected):
 Path parameters (all required):
 
 - `accountId`: `string`, required; better-ccflare account id (see accounts.list); max length 200
+
+#### `POST /api/v1/accounts/import` (Import API-key accounts from better-ccflare)
+
+- Operation: `accounts.import`
+- Scope: `settings:write`
+- MCP tool: `boof_import_accounts`
+- CLI: `boof-runner accounts import`
+- What it does: One-time import of the Anthropic API-key accounts (provider claude-console-api) of a better-ccflare database into boof's internal account pool. The database is opened read-only. Subscription (OAuth) and Codex accounts are not imported: they are listed as skipped with the reason. Inputs: source (better-ccflare), optional path (default ~/.config/better-ccflare/better-ccflare.db). Returns the imported names and the skipped accounts; no key is ever returned. Needs settings:write and a trusted, project-unrestricted client. 409 not_supported unless settings.gateway.mode is internal; 400 when the database cannot be read.
+- Success: HTTP 200 with `{ imported: { name: string }[], skipped: { name: string, provider: string, reason: string }[] }`.
+- Errors: `403 forbidden_scope`, `400 invalid_input`
+
+JSON body (unknown keys are rejected):
+
+- `path`: `string`, optional; max length 1000
+- `source`: `"better-ccflare"`, required
 
 ### Webhooks (admin)
 
@@ -2335,7 +2408,7 @@ JSON body (unknown keys are rejected):
 - MCP tool: none (REST only)
 - CLI: `boof-runner concierge status`
 - What it does: Gets assistant availability and the current conversation for a project. Inputs: projectId. No side effects.
-- Success: HTTP 200 with `{ available: boolean, conversation: { id: string, messages: integer, pending: object[], spentUsd: number } | null, limits: { messagesPerMinute: integer, perConversationUsd: number, perMessageUsd: number }, model: string, reason: string | null, via: "gateway" | "project-key" | null }`.
+- Success: HTTP 200 with `{ available: boolean, conversation: { id: string, messages: integer, pending: object[], spentUsd: number } | null, limits: { messagesPerMinute: integer, perConversationUsd: number, perMessageUsd: number }, model: string, reason: string | null, via: "gateway" | "project-key" | "claude-code" | null }`.
 - Errors: `403 forbidden_scope`, `403 forbidden_project`, `404 project_not_found`, `400 invalid_input`
 
 Path parameters (all required):

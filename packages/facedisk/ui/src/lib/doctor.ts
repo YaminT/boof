@@ -82,7 +82,12 @@ export function needsAttention(status: HarnessStatus): boolean {
     (c) =>
       c.status === "fail" ||
       (c.status === "warn" &&
-        !(c.id === "gateway" && status.anyReady && c.message === "Not configured.")),
+        !(
+          c.id === "gateway" &&
+          status.anyReady &&
+          (c.message === "Not configured." ||
+            c.message === "No account pool; agents use their own sign-in.")
+        )),
   );
 }
 

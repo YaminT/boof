@@ -41,6 +41,8 @@ export type DoctorService = Pick<
   | "updateSettings"
   | "settingsStore"
   | "owlishSecrets"
+  | "poolMode"
+  | "internalPool"
   | "projectKeys"
   | "listProjects"
 >;
@@ -66,6 +68,12 @@ export interface DoctorDeps {
   hasNpm?: () => Promise<boolean>;
 }
 
+/** The messages of the account pool check that need no action while an agent works. */
+const OPTIONAL_POOL_MESSAGES = new Set([
+  "Not configured.",
+  "No account pool; agents use their own sign-in.",
+]);
+
 const MARK = { pass: "✓", warn: "!", fail: "✗" } as const;
 
 /** The npm packages of the agents that install with npm (the same commands as the web Agents page). */
@@ -89,7 +97,7 @@ function needsAttention(status: HarnessStatusResult): boolean {
     (c) =>
       c.status === "fail" ||
       (c.status === "warn" &&
-        !(c.id === "gateway" && status.anyReady && c.message === "Not configured.")),
+        !(c.id === "gateway" && status.anyReady && OPTIONAL_POOL_MESSAGES.has(c.message))),
   );
 }
 
@@ -114,6 +122,7 @@ export function renderDoctor(status: HarnessStatusResult): string[] {
   for (const c of status.checks) {
     lines.push(`${MARK[c.status]} ${c.label.padEnd(width)}  ${c.message}`);
     if (c.status !== "pass" && c.fixHint) lines.push(`  ${" ".repeat(width)}  ${c.fixHint}`);
+    if (c.note) lines.push(`  ${" ".repeat(width)}  ${c.note}`);
   }
   lines.push("", "Coding agents");
   for (const [id, t] of Object.entries(status.tools)) {
@@ -264,7 +273,90 @@ async function fixAgents(ctx: Ctx, status: HarnessStatusResult): Promise<void> {
   }
 }
 
+/** Add one pasted key to the internal pool. The key is never printed, and an error never carries it. */
+async function addPastedKey(ctx: Ctx): Promise<boolean> {
+  const { io, svc } = ctx;
+  const key = (
+    await io.ask("Paste an Anthropic API key (input hidden; Enter to skip): ", { hidden: true })
+  ).trim();
+  if (!key) return false;
+  const name = (await io.ask("Name for it [default]: ")).trim() || "default";
+  try {
+    await (await svc.internalPool()).add({ name, apiKey: key });
+  } catch (e) {
+    io.out(`The key was not saved: ${e instanceof Error ? e.message : "invalid key"}`);
+    return false;
+  }
+  io.out(`Added the account "${name}".`);
+  return true;
+}
+
+const noAnswer = (answer: string) => /^n(o)?$/i.test(answer.trim());
+
+/** Switch to boof's built-in pool, import or add accounts, and ask what to do with better-ccflare. */
+async function fixInternalPool(ctx: Ctx, check: DoctorCheck): Promise<void> {
+  const { io, svc } = ctx;
+  const mode = await svc.poolMode();
+  io.out(`\n${check.label}: ${check.message}`);
+  if (check.note) io.out(check.note);
+  if (ctx.assumeYes) {
+    io.out("(--yes never enters or imports a key.)");
+    return;
+  }
+  const pool = await svc.internalPool();
+  const had = (await svc.loadSettings()).owlish !== undefined;
+  if (mode === "none") {
+    if (noAnswer(await io.ask("Use boof's built-in account pool for Anthropic API keys? [Y/n] "))) {
+      await fixLegacyGateway(ctx, check);
+      return;
+    }
+    const current = (await svc.loadSettings()).gateway;
+    await svc.updateSettings({ gateway: { ...current, mode: "internal" } } as never);
+    io.out("The built-in account pool is on.");
+  }
+  if ((await pool.accounts()).length === 0) {
+    let offered = false;
+    try {
+      const found = await pool.previewCcflare();
+      if (found.importable > 0) {
+        offered = true;
+        const more =
+          found.skipped > 0
+            ? ` ${found.skipped} other account${found.skipped === 1 ? "" : "s"} stay${found.skipped === 1 ? "s" : ""} there.`
+            : "";
+        const q = `Import ${found.importable} API-key account${found.importable === 1 ? "" : "s"} from better-ccflare?${more} [Y/n] `;
+        if (!noAnswer(await io.ask(q))) {
+          const r = await pool.importFromCcflare();
+          io.out(`Imported ${r.imported.length} account${r.imported.length === 1 ? "" : "s"}.`);
+          for (const k of r.skipped)
+            io.out(`  not imported: ${k.name} (${k.provider}): ${k.reason}`);
+        } else offered = false;
+      }
+    } catch {
+      // No readable better-ccflare database: fall through to pasting a key.
+    }
+    if (!offered) await addPastedKey(ctx);
+  }
+  if (had) {
+    if (
+      noAnswer(
+        await io.ask(
+          "Keep better-ccflare for your subscription accounts? (Settings › Accounts) [Y/n] ",
+        ),
+      )
+    ) {
+      await svc.updateSettings({ owlish: null } as never);
+      io.out("Removed the better-ccflare address from boof's settings.");
+    } else io.out("better-ccflare stays configured; switch back to it in Settings › Accounts.");
+  }
+}
+
 async function fixGateway(ctx: Ctx, check: DoctorCheck): Promise<void> {
+  if ((await ctx.svc.poolMode()) === "better-ccflare") return fixLegacyGateway(ctx, check);
+  return fixInternalPool(ctx, check);
+}
+
+async function fixLegacyGateway(ctx: Ctx, check: DoctorCheck): Promise<void> {
   const { io, svc } = ctx;
   io.out(`\n${check.label}: ${check.message}`);
   io.out(
