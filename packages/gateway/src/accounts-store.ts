@@ -1,7 +1,8 @@
+import { readFileSync, statSync } from "node:fs";
 import { chmod, mkdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
-import { lockedAtomicWrite, withFileLock } from "@boof/heart";
+import { lockedAtomicWrite, withFileLock, withProcessLock } from "@boof/heart";
 
 export const PROVIDER = "claude-console-api" as const;
 
@@ -17,6 +18,10 @@ export interface AccountRecord {
   /** 0 to 100; the lowest number is used first. */
   priority: number;
   createdAt: string;
+  /** A manual pause; kept here (not in state.json) so it holds across processes. */
+  paused?: boolean;
+  /** Epoch ms of the last resume; a process that sees it change clears its auth/limit waits. */
+  resumedAt?: number;
 }
 
 /** Runtime state; carries no key. Times are epoch ms. */
@@ -51,6 +56,8 @@ const AccountSchema = z.object({
   apiKey: z.custom<string>(isAnthropicApiKey),
   priority: z.number().int().min(0).max(100),
   createdAt: z.string(),
+  paused: z.boolean().optional(),
+  resumedAt: z.number().finite().optional(),
 });
 const AccountsFile = z.object({ version: z.literal(1), accounts: z.array(AccountSchema) });
 
@@ -68,6 +75,13 @@ const StateSchema = z.object({
   outputTokens: count,
 });
 const StateFile = z.object({ version: z.literal(1), accounts: z.record(z.string(), StateSchema) });
+
+function parseAccounts(json: unknown): AccountRecord[] {
+  if (json === undefined) return [];
+  const parsed = AccountsFile.safeParse(json);
+  if (!parsed.success) throw new Error("gateway/accounts.json has an unexpected shape");
+  return parsed.data.accounts;
+}
 
 const TOLERATED = new Set(["ENOENT", "EPERM", "ENOTSUP", "EOPNOTSUPP"]);
 
@@ -109,11 +123,54 @@ export class AccountsStore {
   }
 
   async loadAccounts(): Promise<AccountRecord[]> {
-    const json = await readJson(this.accountsPath, "gateway/accounts.json");
-    if (json === undefined) return [];
-    const parsed = AccountsFile.safeParse(json);
-    if (!parsed.success) throw new Error("gateway/accounts.json has an unexpected shape");
-    return parsed.data.accounts;
+    return parseAccounts(await readJson(this.accountsPath, "gateway/accounts.json"));
+  }
+
+  /** Synchronous read for the per-request reload check; same errors as `loadAccounts`. */
+  loadAccountsSync(): AccountRecord[] {
+    let text: string;
+    try {
+      text = readFileSync(this.accountsPath, "utf8");
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
+      throw new Error("gateway/accounts.json cannot be read");
+    }
+    try {
+      return parseAccounts(JSON.parse(text));
+    } catch (err) {
+      if (err instanceof SyntaxError) throw new Error("gateway/accounts.json is not valid JSON");
+      throw err;
+    }
+  }
+
+  /** Identity of the current accounts file (changes on every atomic rewrite); "" when missing. */
+  signature(): string {
+    try {
+      const st = statSync(this.accountsPath, { bigint: true });
+      return `${st.ino}:${st.size}:${st.mtimeNs}`;
+    } catch {
+      return "";
+    }
+  }
+
+  /**
+   * Read-modify-write of accounts.json under a lock that holds across processes (and queues
+   * callers in this one). `fn` gets the list as it is on disk now and returns the list to write.
+   */
+  async update<T>(
+    fn: (current: AccountRecord[]) => { accounts: AccountRecord[]; result: T },
+  ): Promise<{ accounts: AccountRecord[]; result: T; signature: string }> {
+    await mkdir(this.dir, { recursive: true, mode: 0o700 });
+    return withProcessLock(
+      join(this.dir, "accounts.lock"),
+      {},
+      async () => {
+        const out = fn(await this.loadAccounts());
+        await this.saveAccounts(out.accounts);
+        return { ...out, signature: this.signature() };
+      },
+      () => new Error("the gateway accounts file is busy; try again"),
+    );
   }
 
   async saveAccounts(accounts: AccountRecord[]): Promise<void> {

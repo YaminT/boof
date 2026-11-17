@@ -56,10 +56,29 @@ describe("classify", () => {
     });
   });
 
-  it("401 and 403 are auth faults", () => {
-    expect(classify({ status: 401 }, NOW)).toEqual({ kind: "auth" });
-    expect(classify({ status: 403, body: body("permission_error", "no") }, NOW)).toEqual({
+  it("only 401 authentication_error is an auth fault; 403 passes through", () => {
+    expect(classify({ status: 401, body: body("authentication_error", "bad") }, NOW)).toEqual({
       kind: "auth",
+    });
+    expect(classify({ status: 401 }, NOW)).toEqual({ kind: "other" });
+    expect(classify({ status: 403, body: body("permission_error", "no") }, NOW)).toEqual({
+      kind: "other",
+    });
+  });
+
+  it("never classifies credit from free text a client controls", () => {
+    const echo = "model: claude-x reached your specified limit";
+    expect(classify({ status: 404, body: body("not_found_error", echo) }, NOW)).toEqual({
+      kind: "other",
+    });
+    expect(classify({ status: 404, body: body("billing_error", "x") }, NOW)).toEqual({
+      kind: "other",
+    });
+    expect(classify({ status: 400, body: body("invalid_request_error", echo) }, NOW)).toEqual({
+      kind: "other",
+    });
+    expect(classify({ status: 400, body: "reached your specified" }, NOW)).toEqual({
+      kind: "other",
     });
   });
 
@@ -68,11 +87,15 @@ describe("classify", () => {
     expect(classify({ status: 400, body: body("invalid_request_error", msg) }, NOW)).toEqual({
       kind: "credit",
     });
-    expect(classify({ status: 400, body: body("x", "You reached your Spend Limit") }, NOW)).toEqual(
-      {
-        kind: "credit",
-      },
-    );
+    expect(
+      classify(
+        {
+          status: 400,
+          body: body("invalid_request_error", "You have reached your specified API usage limits."),
+        },
+        NOW,
+      ),
+    ).toEqual({ kind: "credit" });
     expect(classify({ status: 402, body: body("billing_error", "pay") }, NOW)).toEqual({
       kind: "credit",
     });

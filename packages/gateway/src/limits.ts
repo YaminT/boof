@@ -8,7 +8,7 @@ export type Outcome =
   | { kind: "ok" }
   /** 429: the account is paused until `until` (epoch ms). */
   | { kind: "rate_limited"; until: number }
-  /** 401/403: the key is rejected; paused until the user acts. */
+  /** 401: the key is rejected; paused until the user acts. */
   | { kind: "auth" }
   /** Credit balance or spend limit reached; rechecked later. */
   | { kind: "credit" }
@@ -23,15 +23,15 @@ export const MAX_RESET_MS = 24 * 60 * 60_000;
 /** How long a credit/spend-limit account sits out before it is tried again. */
 export const CREDIT_RECHECK_MS = 60 * 60_000;
 
-/** Lower-case substrings of an error message that mean "out of credit or spend limit". */
+/**
+ * Lower-case prefixes of a 400 `invalid_request_error` message that mean "out of credit or spend
+ * limit". Anchored at the start: the message may echo client text (e.g. a model name), so a
+ * substring match would let a caller poison the pool.
+ */
 export const CREDIT_MARKERS = [
-  "credit balance is too low",
-  "spend limit",
-  // 400 invalid_request_error when a limit the user set is reached ("You have reached your
-  // specified API usage limits" / "...specified workspace API usage limits").
-  "reached your specified",
-  // 429 tier spend cap: "You have reached your API usage limits: ..."
-  "reached your api usage limits",
+  "your credit balance is too low",
+  "you have reached your specified",
+  "you have reached your api usage limits",
 ];
 /** `error.details.error_code` of the 429 tier spend cap (no retry-after; lasts until the month ends). */
 export const SPEND_CAP_ERROR_CODE = "enforced_spend_limit_reached";
@@ -123,15 +123,18 @@ export interface UpstreamAnswer {
 export function classify(answer: UpstreamAnswer, now: number): Outcome {
   const { status } = answer;
   if (status >= 200 && status < 400) return { kind: "ok" };
-  if (status === 401 || status === 403) return { kind: "auth" };
   const info = errorInfo(answer.body);
-  const lower = info.message.toLowerCase();
+  // Only a rejected key pauses an account; 403 (permission_error) is a request problem.
+  if (status === 401 && info.type === "authentication_error") return { kind: "auth" };
+  const lower = info.message.trim().toLowerCase();
+  if (status === 429 && info.code === SPEND_CAP_ERROR_CODE) return { kind: "credit" };
   const credit =
     status === 402 ||
-    CREDIT_ERROR_TYPES.includes(info.type) ||
-    CREDIT_MARKERS.some((m) => lower.includes(m));
-  if (status === 429 && info.code === SPEND_CAP_ERROR_CODE) return { kind: "credit" };
-  if (credit && status !== 429 && status < 500) return { kind: "credit" };
+    (status !== 404 && status < 500 && status !== 429 && CREDIT_ERROR_TYPES.includes(info.type)) ||
+    (status === 400 &&
+      info.type === "invalid_request_error" &&
+      CREDIT_MARKERS.some((m) => lower.startsWith(m)));
+  if (credit) return { kind: "credit" };
   if (status === 429) return { kind: "rate_limited", until: resetTime(answer.headers, now) };
   if (status === 529 || status >= 500 || info.type === "overloaded_error") {
     return { kind: "transient" };

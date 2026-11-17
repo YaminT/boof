@@ -141,7 +141,7 @@ export class ClaudeCodeTool implements Tool {
     const res = await execCommand(this.bin, args, {
       launch: opts.launch ?? { kind: "direct" },
       cwd: opts.cwd,
-      env: { ...childEnv, ...gatewayEnv("anthropic", opts.gateway) },
+      env: { ...childEnv, ...gatewayEnv("anthropic", opts.gateway, childEnv) },
       input: opts.prompt,
       timeoutMs: opts.timeoutMs,
       stopSignalPath: opts.stopSignalPath,

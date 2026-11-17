@@ -193,7 +193,7 @@ describe("AgentAuthResolver", () => {
     });
     const decision = await resolver.decide(makeProject());
     expect(decision).toMatchObject({ ok: true, via: "gateway" });
-    const auth = await resolver.credentials(makeProject(), decision as never);
+    const auth = await resolver.credentials(makeProject(), decision as never, "t");
     expect(auth).toMatchObject({ kind: "gateway", apiKey: "AGENT-KEY-1" });
     const env = claudeAgentEnv({ PATH: "/bin" }, auth, "app", "/cfg");
     expect(env.ANTHROPIC_API_KEY).toBe("AGENT-KEY-1");
@@ -401,9 +401,9 @@ describe("AgentAuthResolver", () => {
     const decision = await resolver.decide(makeProject());
     expect(decision).toMatchObject({ ok: true, via: "gateway" });
     agentStatus = 200;
-    await expect(resolver.credentials(makeProject(), decision as never)).rejects.toBeInstanceOf(
-      AgentAuthRefusedError,
-    );
+    await expect(
+      resolver.credentials(makeProject(), decision as never, "t"),
+    ).rejects.toBeInstanceOf(AgentAuthRefusedError);
   });
   it("refuses the gateway decision when the agent key equals the admin key", async () => {
     const resolver = new AgentAuthResolver({
@@ -493,7 +493,7 @@ describe("AgentAuthResolver", () => {
       note: expect.stringContaining("no better-ccflare client key is configured"),
     });
     if (decision.ok)
-      await expect(resolver.credentials(makeProject(), decision)).resolves.toMatchObject({
+      await expect(resolver.credentials(makeProject(), decision, "t")).resolves.toMatchObject({
         kind: "project-key",
       });
   });
@@ -544,9 +544,9 @@ describe("AgentAuthResolver", () => {
     });
     const decision = await resolver.decide(makeProject());
     current = "http://127.0.0.1:1";
-    await expect(resolver.credentials(makeProject(), decision as never)).rejects.toBeInstanceOf(
-      AgentAuthRefusedError,
-    );
+    await expect(
+      resolver.credentials(makeProject(), decision as never, "t"),
+    ).rejects.toBeInstanceOf(AgentAuthRefusedError);
     server.close();
   });
   it("coalesces simultaneous checks and caches by gateway and client key", async () => {

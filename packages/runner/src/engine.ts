@@ -32,7 +32,8 @@ import {
   appendEvent,
 } from "@boof/heart";
 import { announceBudgetExceeded } from "./budget.js";
-import { reapOrphan } from "@boof/heart";
+import { reapOrphan, resolveGatewayMode } from "@boof/heart";
+import { toolUsesPool } from "./gateway-env.js";
 import { Pipeline, SHUTDOWN_STOP_MARKER, type PipelineOutcome } from "./pipeline.js";
 import { ToolRegistry } from "./tools/registry.js";
 import {
@@ -348,7 +349,9 @@ export class RunnerEngine {
         }
         // The pool gate: a task that needs a pool-routed tool waits; the others run as usual.
         const gatewayRouted = agentDecision?.ok && agentDecision.via === "gateway";
-        const handsGateway = tools.some((t) => this.registry.get(t)?.acceptsPool);
+        const handsGateway = tools.some((t) =>
+          toolUsesPool(this.registry.get(t), resolveGatewayMode(settings)),
+        );
         if (handsGateway) {
           const cred = await this.pool.childCredential();
           if (cred.kind === "unreachable") {

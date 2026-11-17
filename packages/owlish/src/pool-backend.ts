@@ -1,8 +1,11 @@
-import { join } from "node:path";
+import { realpath } from "node:fs/promises";
+import { homedir } from "node:os";
+import { join, sep } from "node:path";
 import {
   AccountsStore,
   GatewayServer,
   defaultCcflareDb,
+  regularFile,
   importCcflare,
   summariseCcflare,
   CcflareImportError,
@@ -126,13 +129,38 @@ export class InternalPoolBackend implements PoolBackend {
 
   /** How many API-key accounts a better-ccflare database offers, and how many it leaves. Counts only. */
   async previewCcflare(path?: string): Promise<{ importable: number; skipped: number }> {
-    return this.ccflare(() => summariseCcflare(path ?? defaultCcflareDb()));
+    return this.ccflare(async () => summariseCcflare(await this.ccflarePath(path)));
   }
 
   /** One-time import of the API-key accounts of a better-ccflare database (read-only). No key is returned. */
   async importFromCcflare(path?: string): Promise<CcflareImportResult> {
     const pool = await this.pool();
-    return this.ccflare(() => importCcflare(path ?? defaultCcflareDb(), (a) => pool.add(a)));
+    return this.ccflare(async () =>
+      importCcflare(await this.ccflarePath(path), (a) => pool.add(a)),
+    );
+  }
+
+  /**
+   * The database to read: the default location, or a regular file under the home directory or
+   * the data root. Anything else gets the same generic error as a missing file.
+   */
+  private async ccflarePath(path?: string): Promise<string> {
+    if (path === undefined) return defaultCcflareDb();
+    const real = await regularFile(path);
+    const roots = await Promise.all(
+      [homedir(), this.opts.root].map((r) => realpath(r).catch(() => r)),
+    );
+    const gateway = join(roots[1]!, "gateway");
+    const inside = (root: string) =>
+      real !== undefined && (real === root || real.startsWith(root + sep));
+    if (!real || !roots.some(inside) || inside(gateway)) {
+      throw new PoolBackendError(
+        "the better-ccflare database could not be read",
+        400,
+        "invalid_input",
+      );
+    }
+    return real;
   }
 
   private async ccflare<T>(fn: () => Promise<T>): Promise<T> {

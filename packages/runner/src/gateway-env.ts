@@ -28,13 +28,33 @@ export function gatewayUrl(value: string): string {
   return parsed.href.replace(/\/+$/, "");
 }
 
-export function gatewayEnv(kind: GatewayKind, gateway: Gateway | undefined): NodeJS.ProcessEnv {
+/** `base`'s NO_PROXY with a loopback gateway host added, so the run token never goes to a proxy. */
+function noProxy(url: string, base: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const host = new URL(url).hostname;
+  if (host !== "127.0.0.1" && host !== "localhost") return {};
+  const merge = (current: string | undefined) =>
+    current?.split(",").some((h) => h.trim() === host)
+      ? current
+      : [current?.trim(), host].filter(Boolean).join(",");
+  const value = merge(base.NO_PROXY ?? base.no_proxy);
+  return { NO_PROXY: value, no_proxy: value };
+}
+
+export function gatewayEnv(
+  kind: GatewayKind,
+  gateway: Gateway | undefined,
+  base: NodeJS.ProcessEnv = {},
+): NodeJS.ProcessEnv {
   if (!gateway) return {};
   const url = gatewayUrl(gateway.url);
   const key = gateway.apiKey || undefined;
   switch (kind) {
     case "anthropic":
-      return { ANTHROPIC_BASE_URL: url, ...(key ? { ANTHROPIC_AUTH_TOKEN: key } : {}) };
+      return {
+        ANTHROPIC_BASE_URL: url,
+        ...(key ? { ANTHROPIC_AUTH_TOKEN: key } : {}),
+        ...noProxy(url, base),
+      };
     case "openai":
       return { OPENAI_BASE_URL: `${url}/v1`, OPENAI_API_KEY: key ?? DUMMY_OPENAI_KEY };
     case "opencode":
@@ -44,6 +64,16 @@ export function gatewayEnv(kind: GatewayKind, gateway: Gateway | undefined): Nod
             anthropic: { options: { baseURL: `${url}/v1`, ...(key ? { apiKey: key } : {}) } },
           },
         }),
+        ...noProxy(url, base),
       };
   }
+}
+
+/** Whether a tool is handed the pool gateway in this gateway mode (codex is not, in internal mode). */
+export function toolUsesPool(
+  tool: { acceptsPool?: boolean; acceptsInternalPool?: boolean } | undefined,
+  mode: string,
+): boolean {
+  if (!tool?.acceptsPool) return false;
+  return !(mode === "internal" && tool.acceptsInternalPool === false);
 }

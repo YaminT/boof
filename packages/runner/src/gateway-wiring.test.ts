@@ -8,9 +8,11 @@ import { defaultSettings, type Settings } from "@boof/heart";
 import { InternalPoolBackend } from "@boof/owlish";
 import { agentEnv } from "./agent-env.js";
 import { AgentAuthResolver } from "./agent-auth.js";
-import { gatewayEnv } from "./gateway-env.js";
+import { gatewayEnv, toolUsesPool } from "./gateway-env.js";
 import { PoolGate } from "./pool-gate.js";
 import { ClaudeCodeTool } from "./tools/claude-code.js";
+import { CodexTool } from "./tools/codex.js";
+import { OpencodeTool } from "./tools/opencode.js";
 
 const KEY = "sk-ant-api03-WIRINGKEYWIRINGKEY00";
 const KEY2 = "sk-ant-api03-WIRINGKEY2WIRINGKEY2";
@@ -162,6 +164,27 @@ describe("internal gateway: env and tokens", () => {
     await post(g.url, g.apiKey!);
     await post(g.url, g.apiKey!);
     expect(new Set(seenKeys)).toEqual(new Set([KEY, KEY2]));
+  });
+});
+
+describe("internal gateway: codex stays outside the pool", () => {
+  it("hands the gateway to claude-code and opencode, never to codex, in internal mode", () => {
+    expect(toolUsesPool(new CodexTool(), "internal")).toBe(false);
+    expect(toolUsesPool(new ClaudeCodeTool(), "internal")).toBe(true);
+    expect(toolUsesPool(new OpencodeTool(), "internal")).toBe(true);
+    // better-ccflare still serves codex
+    expect(toolUsesPool(new CodexTool(), "better-ccflare")).toBe(true);
+  });
+});
+
+describe("gateway env: loopback is never sent through a proxy", () => {
+  const gw = { url: "http://127.0.0.1:4321", apiKey: "bgw_x" };
+  it("adds 127.0.0.1 to NO_PROXY for anthropic and opencode, keeping what was there", () => {
+    const env = gatewayEnv("anthropic", gw, { NO_PROXY: "example.org", HTTP_PROXY: "http://p" });
+    expect(env.NO_PROXY).toBe("example.org,127.0.0.1");
+    expect(env.no_proxy).toBe("example.org,127.0.0.1");
+    expect(gatewayEnv("opencode", gw).NO_PROXY).toBe("127.0.0.1");
+    expect(gatewayEnv("anthropic", gw, { NO_PROXY: "127.0.0.1" }).NO_PROXY).toBe("127.0.0.1");
   });
 });
 

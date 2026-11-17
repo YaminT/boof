@@ -262,3 +262,99 @@ describe("persistence and admin", () => {
     pool.report("zzz", { kind: "auth" });
   });
 });
+
+describe("consistency", () => {
+  const second = async (ids = ["x1", "x2", "x3"]) => {
+    let i = 0;
+    return track(
+      await Pool.open({
+        store: new AccountsStore(join(root, "gateway")),
+        now: clock,
+        newId: () => ids[i++] ?? `y${i}`,
+      }),
+    );
+  };
+
+  it("concurrent remove and add leave memory and disk the same", async () => {
+    const pool = await open();
+    const a = await pool.add({ name: "a", apiKey: key("a") });
+    await pool.add({ name: "b", apiKey: key("b") });
+    await Promise.all([pool.remove(a.id), pool.add({ name: "c", apiKey: key("c") })]);
+    const disk = (await store.loadAccounts()).map((x) => x.apiKey).sort();
+    expect(disk).toEqual([key("b"), key("c")]);
+    expect(pool.secrets().sort()).toEqual(disk);
+  });
+
+  it("a second pool on the same root removes a key and the first stops using it", async () => {
+    const first = await open("ordered", ["a", "b"]);
+    const a = await first.add({ name: "a", apiKey: key("a"), priority: 0 });
+    await first.add({ name: "b", apiKey: key("b"), priority: 1 });
+    const other = await second();
+    expect(await other.remove(a.id)).toBe(true);
+    expect(first.pick()?.apiKey).toBe(key("b"));
+    expect(first.secrets()).toEqual([key("b")]);
+    // the first pool's next write must not bring the removed key back
+    await first.add({ name: "c", apiKey: key("c") });
+    expect((await store.loadAccounts()).map((x) => x.apiKey).sort()).toEqual([key("b"), key("c")]);
+  });
+
+  it("an add from a second pool survives the first pool's next add", async () => {
+    const first = await open("ordered", ["a", "b"]);
+    await first.add({ name: "a", apiKey: key("a") });
+    const other = await second();
+    await other.add({ name: "from-cli", apiKey: key("cli") });
+    expect(first.status().configured).toBe(2);
+    await first.add({ name: "b", apiKey: key("b") });
+    expect((await store.loadAccounts()).map((x) => x.apiKey).sort()).toEqual(
+      [key("a"), key("b"), key("cli")].sort(),
+    );
+  });
+
+  it("brings an existing gateway directory to 0700", async () => {
+    const { chmod, mkdir, stat } = await import("node:fs/promises");
+    const dir = join(root, "gateway");
+    await mkdir(dir, { recursive: true });
+    await chmod(dir, 0o755);
+    await open();
+    if (process.platform !== "win32") expect((await stat(dir)).mode & 0o777).toBe(0o700);
+  });
+
+  it("writes counters behind a debounce, a pause at once", async () => {
+    const pool = await open("ordered", ["a"]);
+    const a = await pool.add({ name: "a", apiKey: key("a") });
+    await pool.flush();
+    pool.pick();
+    expect((await store.loadState()).get(a.id)?.requestCount).toBe(0);
+    pool.report(a.id, { kind: "auth" }, 401);
+    await pool.flush();
+    const saved = (await store.loadState()).get(a.id);
+    expect(saved?.paused).toBe(true);
+    expect(saved?.requestCount).toBe(1);
+  });
+});
+
+describe("manual pause across processes", () => {
+  it("a pause or resume by one Pool holds in another and survives its state writes", async () => {
+    const serve = track(await Pool.open({ store, now: clock, newId: () => "a" }));
+    await serve.add({ name: "one", apiKey: key("a") });
+    const cli = track(await Pool.open({ store: new AccountsStore(store.dir), now: clock }));
+    await cli.pause("a");
+    expect(serve.pick()).toBeNull();
+    serve.report("a", { kind: "rate_limited", until: now + 1000 }, 429);
+    await serve.flush();
+    expect(serve.accountList()[0]).toMatchObject({ paused: true, pauseReason: "manual" });
+    await cli.resume("a");
+    expect(serve.pick()?.id).toBe("a");
+    expect(serve.accountList()[0]).toMatchObject({ paused: false, rateLimitStatus: "allowed" });
+  });
+
+  it("a resume in another process clears this one's auth pause", async () => {
+    const serve = track(await Pool.open({ store, now: clock, newId: () => "a" }));
+    await serve.add({ name: "one", apiKey: key("a") });
+    serve.report("a", { kind: "auth" }, 401);
+    expect(serve.pick()).toBeNull();
+    const cli = track(await Pool.open({ store: new AccountsStore(store.dir), now: clock }));
+    await cli.resume("a");
+    expect(serve.pick()?.id).toBe("a");
+  });
+});

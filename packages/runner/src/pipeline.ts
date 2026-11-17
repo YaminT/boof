@@ -54,7 +54,8 @@ import {
 import { POOL_AGENT_KEY_REQUIRED } from "./pool-gate.js";
 import { ToolRunError, transientReason } from "./tools/errors.js";
 import { QUESTIONS_PROTOCOL } from "./tools/questions.js";
-import type { Gateway } from "./gateway-env.js";
+import { redactSecrets } from "@boof/owlish";
+import { toolUsesPool, type Gateway } from "./gateway-env.js";
 import type { PoolGate } from "./pool-gate.js";
 import type { RunOptions, RunResult, Tool } from "./tools/types.js";
 import type { ToolRegistry } from "./tools/registry.js";
@@ -452,12 +453,18 @@ export class Pipeline {
   }
 
   private async log(id: string, line: string): Promise<void> {
-    await appendFile(join(this.areaDir(id), "log.txt"), line + "\n", "utf8").catch(() => {});
+    await appendFile(
+      join(this.areaDir(id), "log.txt"),
+      redactSecrets(line, []) + "\n",
+      "utf8",
+    ).catch(() => {});
   }
 
   /** Append a raw output chunk (no newline added) to log.txt for live tailing. */
   private async streamChunk(id: string, chunk: string): Promise<void> {
-    await appendFile(join(this.areaDir(id), "log.txt"), chunk, "utf8").catch(() => {});
+    await appendFile(join(this.areaDir(id), "log.txt"), redactSecrets(chunk, []), "utf8").catch(
+      () => {},
+    );
   }
 
   private async stopRequested(id: string): Promise<boolean> {
@@ -607,9 +614,10 @@ export class Pipeline {
               ),
             };
           }
+          const gatewayMode = resolveGatewayMode(this.deps.settings);
           if (
-            tool.acceptsPool &&
-            resolveGatewayMode(this.deps.settings) === "better-ccflare" &&
+            toolUsesPool(tool, gatewayMode) &&
+            gatewayMode === "better-ccflare" &&
             !this.deps.gateway
           )
             throw new Error(POOL_AGENT_KEY_REQUIRED);
@@ -621,7 +629,9 @@ export class Pipeline {
             inheritMcpServers: this.deps.settings.runner.inheritMcpServers === true,
             agentEnv: this.deps.settings.runner.agentEnv,
             agentMarker: this.deps.dataRoot ? agentMarkerFor(this.deps.dataRoot) : undefined,
-            ...(tool.acceptsPool && this.deps.gateway ? { gateway: this.deps.gateway } : {}),
+            ...(toolUsesPool(tool, gatewayMode) && this.deps.gateway
+              ? { gateway: this.deps.gateway }
+              : {}),
             prompt,
             resumeSessionId,
             ...(resumeSessionId ? { resumeBaseline: sumUsage(interrupted) } : {}),
@@ -817,7 +827,9 @@ export class Pipeline {
   /** Is the pool unusable right now (a fresh look)? False for tools it does not serve. */
   private async poolDown(tool: Tool, agentGateway = false): Promise<boolean> {
     const pool = this.deps.pool;
-    if (!pool || (!tool.acceptsPool && !agentGateway)) return false;
+    if (!pool || (!toolUsesPool(tool, resolveGatewayMode(this.deps.settings)) && !agentGateway)) {
+      return false;
+    }
     return (await pool.check({ fresh: true })).blocked;
   }
 
@@ -829,7 +841,7 @@ export class Pipeline {
    */
   private async awaitPool(id: string, tool: Tool, fresh = false): Promise<void> {
     const pool = this.deps.pool;
-    if (!pool || !tool.acceptsPool) return;
+    if (!pool || !toolUsesPool(tool, resolveGatewayMode(this.deps.settings))) return;
     if (!(await pool.check({ fresh })).blocked) return;
     const maxMs = retrySettings(this.deps.settings).poolWaitMs;
     const started = Date.now();

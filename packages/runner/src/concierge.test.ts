@@ -82,6 +82,7 @@ function authStub(
   return {
     decide: vi.fn(async () => decision),
     credentials: vi.fn(async () => credentials),
+    releaseRun: vi.fn(async () => {}),
   } as unknown as AgentAuthResolver;
 }
 
@@ -228,6 +229,27 @@ describe("ClaudeConcierge", () => {
     ]);
     if (credentials.kind === "gateway") expect(env.ANTHROPIC_BASE_URL).toBe(GATEWAY);
     else expect(env).not.toHaveProperty("ANTHROPIC_BASE_URL");
+  });
+
+  it("mints each gateway turn its own run id and revokes it when the turn ends", async () => {
+    const root = await tempRoot();
+    const creds = { kind: "gateway" as const, url: GATEWAY, apiKey: AGENT_KEY };
+    const auth = authStub({ ok: true, via: "gateway", note: null }, creds);
+    const concierge = new ClaudeConcierge({
+      root,
+      auth,
+      pool: poolStub(),
+      loadSdk: async () => fakeSdk([success(), success()]).sdk,
+      resolveExecutable: executable,
+      clientApp: "boof-runner/test",
+    });
+    await concierge.turn(input());
+    await concierge.turn(input());
+    const minted = (auth.credentials as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[2]);
+    const released = (auth.releaseRun as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[0]);
+    expect(minted).toHaveLength(2);
+    expect(minted[0]).not.toBe(minted[1]);
+    expect(released).toEqual(minted);
   });
 
   it("streams text and tool events", async () => {

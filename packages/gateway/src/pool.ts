@@ -45,6 +45,8 @@ export interface PoolOptions {
   now?: () => number;
   strategy?: Strategy;
   newId?: () => string;
+  /** How long counter-only state changes wait before they are written; default 1000 ms. */
+  persistDebounceMs?: number;
 }
 
 export interface PickedAccount {
@@ -70,19 +72,31 @@ export class Pool {
   private lastPicked: string | null = null;
   private writing: Promise<void> = Promise.resolve();
   private writeError: unknown;
+  private signature = "";
+  private readonly resumeSeen = new Map<string, number>();
+  private adminQueue: Promise<unknown> = Promise.resolve();
+  private readonly debounceMs: number;
+  private timer: NodeJS.Timeout | undefined;
 
   private constructor(opts: PoolOptions) {
     this.store = opts.store;
     this.now = opts.now ?? Date.now;
     this.strategy = opts.strategy ?? "ordered";
+    this.debounceMs = opts.persistDebounceMs ?? 1000;
     this.newId = opts.newId ?? (() => `acc-${randomBytes(6).toString("hex")}`);
   }
 
   static async open(opts: PoolOptions): Promise<Pool> {
     const pool = new Pool(opts);
+    await opts.store.tighten();
+    pool.signature = opts.store.signature();
     pool.accounts = await opts.store.loadAccounts();
     const saved = await opts.store.loadState();
-    for (const a of pool.accounts) pool.state.set(a.id, saved.get(a.id) ?? freshState());
+    for (const a of pool.accounts) {
+      pool.state.set(a.id, saved.get(a.id) ?? freshState());
+      pool.resumeSeen.set(a.id, a.resumedAt ?? 0);
+    }
+    pool.syncFlags(pool.accounts);
     return pool;
   }
 
@@ -100,66 +114,82 @@ export class Pool {
     if (!isAnthropicApiKey(input.apiKey)) {
       throw new Error("the key must be an Anthropic Console API key (sk-ant-api…)");
     }
-    const priority = input.priority ?? this.nextPriority();
-    this.checkPriority(priority);
-    if (this.accounts.some((a) => a.apiKey === input.apiKey)) {
-      throw new Error("that key is already in the pool");
-    }
-    const record: AccountRecord = {
-      id: this.newId(),
-      name,
-      provider: PROVIDER,
-      apiKey: input.apiKey,
-      priority,
-      createdAt: new Date(this.now()).toISOString(),
-    };
-    await this.store.saveAccounts([...this.accounts, record]);
-    this.accounts.push(record);
-    this.state.set(record.id, freshState());
-    await this.persistNow();
-    return this.summary(record);
+    if (input.priority !== undefined) this.checkPriority(input.priority);
+    return this.admin(async () => {
+      const { result, accounts, signature } = await this.store.update((current) => {
+        const priority = input.priority ?? nextPriority(current);
+        this.checkPriority(priority);
+        if (current.some((a) => a.apiKey === input.apiKey)) {
+          throw new Error("that key is already in the pool");
+        }
+        const record: AccountRecord = {
+          id: this.newId(),
+          name,
+          provider: PROVIDER,
+          apiKey: input.apiKey,
+          priority,
+          createdAt: new Date(this.now()).toISOString(),
+        };
+        return { accounts: [...current, record], result: record };
+      });
+      this.adopt(accounts, signature);
+      await this.persistNow();
+      return this.summary(result);
+    });
   }
 
   async remove(id: string): Promise<boolean> {
-    const next = this.accounts.filter((a) => a.id !== id);
-    if (next.length === this.accounts.length) return false;
-    await this.store.saveAccounts(next);
-    this.accounts = next;
-    this.state.delete(id);
-    if (this.lastPicked === id) this.lastPicked = null;
-    await this.persistNow();
-    return true;
+    return this.admin(async () => {
+      const { result, accounts, signature } = await this.store.update((current) => {
+        const next = current.filter((a) => a.id !== id);
+        return { accounts: next, result: next.length !== current.length };
+      });
+      this.adopt(accounts, signature);
+      if (this.lastPicked === id) this.lastPicked = null;
+      await this.persistNow();
+      return result;
+    });
   }
 
   async setPriority(id: string, priority: number): Promise<boolean> {
     this.checkPriority(priority);
-    const a = this.find(id);
-    if (!a) return false;
-    const accounts = this.accounts.map((x) => (x.id === id ? { ...x, priority } : x));
-    await this.store.saveAccounts(accounts);
-    this.accounts = accounts;
-    return true;
+    return this.admin(async () => {
+      const { result, accounts, signature } = await this.store.update((current) => ({
+        accounts: current.map((x) => (x.id === id ? { ...x, priority } : x)),
+        result: current.some((x) => x.id === id),
+      }));
+      this.adopt(accounts, signature);
+      return result;
+    });
   }
 
   async pause(id: string): Promise<boolean> {
-    const s = this.state.get(id);
-    if (!s) return false;
-    s.paused = true;
-    s.pauseReason = "manual";
-    await this.persistNow();
-    return true;
+    return this.admin(async () => {
+      const { result, accounts, signature } = await this.store.update((current) => ({
+        accounts: current.map((x) => (x.id === id ? { ...x, paused: true } : x)),
+        result: current.some((x) => x.id === id),
+      }));
+      this.adopt(accounts, signature);
+      await this.persistNow();
+      return result;
+    });
   }
 
-  /** Clears a manual or auth pause and any rate-limit or credit wait. */
+  /** Clears a manual or auth pause and any rate-limit or credit wait, in every process. */
   async resume(id: string): Promise<boolean> {
-    const s = this.state.get(id);
-    if (!s) return false;
-    s.paused = false;
-    s.pauseReason = null;
-    s.rateLimitedUntil = null;
-    s.usageExhaustedAt = null;
-    await this.persistNow();
-    return true;
+    return this.admin(async () => {
+      const { result, accounts, signature } = await this.store.update((current) => ({
+        accounts: current.map((x) => {
+          if (x.id !== id) return x;
+          const { paused: _paused, ...rest } = x;
+          return { ...rest, resumedAt: Math.max(this.now(), (x.resumedAt ?? 0) + 1) };
+        }),
+        result: current.some((x) => x.id === id),
+      }));
+      this.adopt(accounts, signature);
+      await this.persistNow();
+      return result;
+    });
   }
 
   // ---- per request ---------------------------------------------------------------------------
@@ -169,6 +199,7 @@ export class Pool {
    * accounts that already failed this request. Counts the request and remembers the choice.
    */
   pick(exclude: Iterable<string> = []): PickedAccount | null {
+    this.refresh();
     const skip = new Set(exclude);
     const usable = this.sorted().filter(
       (a) => !skip.has(a.id) && this.availability(a.id) === "routable",
@@ -220,7 +251,10 @@ export class Pool {
       case "other":
         break;
     }
-    this.persist();
+    // A pause or wait is written at once; counters wait for the debounce.
+    this.persist(
+      outcome.kind === "auth" || outcome.kind === "credit" || outcome.kind === "rate_limited",
+    );
   }
 
   /** Count tokens for an account (counters only). */
@@ -236,11 +270,13 @@ export class Pool {
   // ---- views ---------------------------------------------------------------------------------
 
   accountList(): AccountSummary[] {
+    this.refresh();
     return this.sorted().map((a) => this.summary(a));
   }
 
   /** The pool right now, built from account state and the clock. */
   status(): PoolStatus {
+    this.refresh();
     const configured = this.accounts.length;
     const counts = { paused: 0, rateLimited: 0, usageExhausted: 0, routable: 0 };
     let next: number | null = null;
@@ -288,11 +324,13 @@ export class Pool {
 
   /** Every key in the pool, for redacting logs and errors. Never log the result. */
   secrets(): string[] {
+    this.refresh();
     return this.accounts.map((a) => a.apiKey);
   }
 
   /** Wait for queued state writes; rethrows the last write failure once. */
   async flush(): Promise<void> {
+    if (this.timer) this.persist(true);
     await this.writing;
     if (this.writeError !== undefined) {
       const err = this.writeError;
@@ -303,10 +341,6 @@ export class Pool {
 
   // ---- internals -----------------------------------------------------------------------------
 
-  private find(id: string): AccountRecord | undefined {
-    return this.accounts.find((a) => a.id === id);
-  }
-
   private stateOf(id: string): AccountState {
     let s = this.state.get(id);
     if (!s) this.state.set(id, (s = freshState()));
@@ -316,13 +350,6 @@ export class Pool {
   private sorted(): AccountRecord[] {
     return [...this.accounts].sort(
       (a, b) => a.priority - b.priority || a.createdAt.localeCompare(b.createdAt),
-    );
-  }
-
-  private nextPriority(): number {
-    return Math.min(
-      100,
-      this.accounts.reduce((m, a) => Math.max(m, a.priority + 1), 0),
     );
   }
 
@@ -372,7 +399,76 @@ export class Pool {
     };
   }
 
-  private persist(): void {
+  /** Run an admin change after the ones before it (a queue per Pool; the store adds the file lock). */
+  private admin<T>(fn: () => Promise<T>): Promise<T> {
+    const run = this.adminQueue.then(fn, fn);
+    this.adminQueue = run.catch(() => {});
+    return run;
+  }
+
+  /** Take the list a locked write just produced as the current one. */
+  private adopt(accounts: AccountRecord[], signature: string): void {
+    this.signature = signature;
+    this.applyAccounts(accounts);
+  }
+
+  private applyAccounts(accounts: AccountRecord[]): void {
+    this.accounts = accounts;
+    const ids = new Set(accounts.map((a) => a.id));
+    for (const id of [...this.state.keys()]) if (!ids.has(id)) this.state.delete(id);
+    for (const a of accounts) if (!this.state.has(a.id)) this.state.set(a.id, freshState());
+    this.syncFlags(accounts);
+  }
+
+  /** Apply the cross-process flags in accounts.json (manual pause, resume marker) to local state. */
+  private syncFlags(accounts: AccountRecord[]): void {
+    for (const a of accounts) {
+      const s = this.stateOf(a.id);
+      const seen = this.resumeSeen.get(a.id);
+      const stamp = a.resumedAt ?? 0;
+      if (seen !== undefined && stamp !== seen) {
+        s.paused = false;
+        s.pauseReason = null;
+        s.rateLimitedUntil = null;
+        s.usageExhaustedAt = null;
+      }
+      this.resumeSeen.set(a.id, stamp);
+      if (a.paused) {
+        s.paused = true;
+        s.pauseReason = "manual";
+      } else if (s.pauseReason === "manual") {
+        s.paused = false;
+        s.pauseReason = null;
+      }
+    }
+  }
+
+  /** Pick up accounts.json when another process (or an edit) changed it. A bad file keeps the old list. */
+  private refresh(): void {
+    const sig = this.store.signature();
+    if (sig === this.signature) return;
+    try {
+      const accounts = this.store.loadAccountsSync();
+      this.signature = sig;
+      this.applyAccounts(accounts);
+    } catch {
+      // keep serving the last good list; retried on the next change
+    }
+  }
+
+  private persist(immediate = false): void {
+    if (!immediate) {
+      if (this.timer) return;
+      this.timer = setTimeout(() => {
+        this.timer = undefined;
+        this.persist(true);
+      }, this.debounceMs);
+      this.timer.unref();
+      return;
+    }
+    clearTimeout(this.timer);
+    this.timer = undefined;
+    this.refresh(); // pick up a pause/resume written by another process before persisting
     const snapshot = new Map([...this.state].map(([k, v]) => [k, { ...v }] as const));
     this.writing = this.writing
       .then(() => this.store.saveState(snapshot))
@@ -382,7 +478,14 @@ export class Pool {
   }
 
   private async persistNow(): Promise<void> {
-    this.persist();
+    this.persist(true);
     await this.flush();
   }
+}
+
+function nextPriority(accounts: AccountRecord[]): number {
+  return Math.min(
+    100,
+    accounts.reduce((m, a) => Math.max(m, a.priority + 1), 0),
+  );
 }

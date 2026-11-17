@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { lstat, realpath } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { isAnthropicApiKey, PROVIDER } from "./accounts-store.js";
@@ -28,6 +28,21 @@ export interface CcflareScan {
 export interface CcflareImportResult {
   imported: { name: string }[];
   skipped: CcflareSkip[];
+}
+
+/** One message for a missing, unreadable, special or invalid file: no existence oracle. */
+const UNREADABLE = "the better-ccflare database could not be read";
+const MAX_DB_BYTES = 512 * 1024 * 1024;
+
+/** The real path of a regular file (no FIFO, device or directory), or undefined. */
+export async function regularFile(path: string): Promise<string | undefined> {
+  try {
+    const real = await realpath(path);
+    const st = await lstat(real);
+    return st.isFile() && st.size <= MAX_DB_BYTES ? real : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 export class CcflareImportError extends Error {
@@ -68,7 +83,8 @@ async function withoutSqliteWarning<T>(fn: () => Promise<T> | T): Promise<T> {
  * key are candidates; every other account is listed as skipped with the reason.
  */
 export async function scanCcflare(dbPath: string): Promise<CcflareScan> {
-  if (!existsSync(dbPath)) throw new CcflareImportError(`no better-ccflare database at ${dbPath}`);
+  const file = await regularFile(dbPath);
+  if (!file) throw new CcflareImportError(UNREADABLE);
   return withoutSqliteWarning(async () => {
     let sqlite: typeof import("node:sqlite");
     try {
@@ -79,9 +95,9 @@ export async function scanCcflare(dbPath: string): Promise<CcflareScan> {
     let rows: Record<string, unknown>[];
     const db = (() => {
       try {
-        return new sqlite.DatabaseSync(dbPath, { readOnly: true });
+        return new sqlite.DatabaseSync(file, { readOnly: true });
       } catch {
-        throw new CcflareImportError("the better-ccflare database could not be opened");
+        throw new CcflareImportError(UNREADABLE);
       }
     })();
     try {
@@ -89,7 +105,7 @@ export async function scanCcflare(dbPath: string): Promise<CcflareScan> {
         .prepare("SELECT name, provider, api_key FROM accounts ORDER BY priority, name")
         .all() as Record<string, unknown>[];
     } catch {
-      throw new CcflareImportError("the file is not a better-ccflare database");
+      throw new CcflareImportError(UNREADABLE);
     } finally {
       db.close();
     }

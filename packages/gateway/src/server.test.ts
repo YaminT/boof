@@ -404,16 +404,15 @@ describe("Streaming", () => {
     expect(upstreamClosed).toBe(true);
   });
 
-  it("ends the response when the upstream drops mid-stream, without retrying", async () => {
+  it("aborts the response when the upstream drops mid-stream, without retrying", async () => {
     await boot();
     handler = (_q, res) => {
       res.writeHead(200, { "content-type": "text/event-stream" });
       res.write('data: {"type":"message_start","message":{"usage":{"input_tokens":3}}}\n\n');
       setTimeout(() => res.destroy(), 50);
     };
-    const r = await call({});
-    expect(r.status).toBe(200);
-    expect(r.body).toContain("message_start");
+    // The client must see a failure, not a clean end that looks like a complete response.
+    await expect(call({})).rejects.toThrow();
     expect(seen).toHaveLength(1);
   });
 
@@ -423,8 +422,7 @@ describe("Streaming", () => {
       res.writeHead(200, { "content-type": "text/event-stream" });
       res.write("data: {}\n\n");
     };
-    const r = await call({});
-    expect(r.status).toBe(200);
+    await expect(call({})).rejects.toThrow();
     expect(seen).toHaveLength(1);
   });
 
@@ -438,7 +436,174 @@ describe("Streaming", () => {
   });
 });
 
+describe("Limits", () => {
+  it("answers 429 when too many body bytes are being received, and frees them after", async () => {
+    await boot({ maxInflightBodyBytes: 100, maxRunInflightBodyBytes: 100 });
+    const sock = net.connect(base.port, "127.0.0.1");
+    sock.on("error", () => {});
+    sock.write(
+      `POST /v1/messages HTTP/1.1\r\nhost: 127.0.0.1:${base.port}\r\nx-api-key: ${token}\r\ncontent-length: 80\r\n\r\n${"x".repeat(60)}`,
+    );
+    await sleep(50);
+    const second = await call({ body: "x".repeat(80) });
+    expect(second.status).toBe(429);
+    expect(second.headers["retry-after"]).toBe("1");
+    sock.destroy();
+    await sleep(300);
+    expect((await call({ body: "x".repeat(80) })).status).toBe(200);
+  });
+
+  it("pipelined requests on dying sockets give the reservation back", async () => {
+    await boot({ maxInflightBodyBytes: 1000, maxBodyBytes: 600 });
+    handler = (_q, res) => setTimeout(() => res.end("{}"), 200);
+    const raw = (len: number, body: string) =>
+      `POST /v1/messages HTTP/1.1\r\nhost: 127.0.0.1:${base.port}\r\nx-api-key: ${token}\r\n` +
+      `content-length: ${len}\r\n\r\n${body}`;
+    const socks: net.Socket[] = [];
+    for (let i = 0; i < 6; i++) {
+      const sock = net.connect(base.port, "127.0.0.1");
+      sock.on("error", () => {});
+      sock.write(raw(2, "{}") + raw(500, "x".repeat(10)));
+      socks.push(sock);
+    }
+    await sleep(60);
+    for (const sock of socks) sock.destroy();
+    await sleep(300);
+    expect((gw as unknown as { inflight: number }).inflight).toBe(0);
+    expect((await call({ body: "x".repeat(400) })).status).toBe(200);
+  });
+
+  it("counts received bytes, not the declared length, and caps one run's share", async () => {
+    await boot({ maxInflightBodyBytes: 1000, maxBodyBytes: 600, maxRunInflightBodyBytes: 300 });
+    const sock = net.connect(base.port, "127.0.0.1");
+    sock.on("error", () => {});
+    sock.write(
+      `POST /v1/messages HTTP/1.1\r\nhost: 127.0.0.1:${base.port}\r\nx-api-key: ${token}\r\ncontent-length: 600\r\n\r\n`,
+    );
+    await sleep(50);
+    // declared 600 but nothing sent: another run still gets in
+    const other = tokens.mint({ runId: "run2", ttlMs: 60_000 });
+    const r = await call({ body: "x".repeat(200), headers: { "x-api-key": other } });
+    expect(r.status).toBe(200);
+    // one run cannot hold more than its share
+    const big = await call({ body: "x".repeat(400) });
+    expect(big.status).toBe(429);
+    sock.destroy();
+  });
+
+  it("keeps counting a fully uploaded body while the upstream has not answered", async () => {
+    await boot({ maxInflightBodyBytes: 1000, maxBodyBytes: 600, maxRunInflightBodyBytes: 300 });
+    let release: (() => void) | undefined;
+    handler = (_q, res) => {
+      release = () => res.end("{}");
+    };
+    const first = call({ body: "x".repeat(250) }).catch(() => undefined);
+    await sleep(150);
+    // the first body is fully uploaded but still held in memory: it must still count
+    const second = await call({ body: "x".repeat(250) });
+    expect(second.status).toBe(429);
+    release?.();
+    await first;
+    await sleep(100);
+    expect((gw as unknown as { inflight: number }).inflight).toBe(0);
+  });
+
+  it("ends a stream when its token is revoked mid-response", async () => {
+    await boot();
+    handler = (_q, res) => {
+      res.writeHead(200, { "content-type": "text/event-stream" });
+      res.write("data: {}\n\n");
+      setTimeout(() => res.write("data: {}\n\n"), 100);
+    };
+    const pending = call({});
+    await sleep(40);
+    tokens.revokeRun("run1");
+    await expect(pending).rejects.toThrow();
+  });
+});
+
 describe("Failover", () => {
+  const notFoundEcho: Handler = (q, res) => {
+    void q;
+    res.writeHead(404, { "content-type": "application/json" });
+    res.end(
+      JSON.stringify({
+        type: "error",
+        error: { type: "not_found_error", message: "model: claude-x reached your specified limit" },
+      }),
+    );
+  };
+
+  it("a 404 that echoes client text never pauses or exhausts an account", async () => {
+    await boot();
+    handler = notFoundEcho;
+    const r = await call({
+      body: JSON.stringify({ model: "claude-x reached your specified limit" }),
+    });
+    expect(r.status).toBe(404);
+    expect(seen).toHaveLength(1);
+    expect(pool.status().status).toBe("ok");
+  });
+
+  it("keeps failing over but marks at most two accounts per request, then answers 429 retry-after 1", async () => {
+    await boot({}, [KEY_A, KEY_B, "sk-ant-api03-CCCCCCCCCCCCCCCCCCCC"]);
+    handler = (_q, res) => {
+      res.writeHead(402, { "content-type": "application/json" });
+      res.end(JSON.stringify({ type: "error", error: { type: "billing_error", message: "x" } }));
+    };
+    const r = await call({});
+    expect(seen).toHaveLength(3);
+    expect(pool.status().usageExhausted).toBe(2);
+    expect(r.status).toBe(429);
+    expect(r.headers["retry-after"]).toBe("1");
+  });
+
+  it("A and B out of credit, C fine: C serves the request", async () => {
+    await boot({}, [KEY_A, KEY_B, "sk-ant-api03-CCCCCCCCCCCCCCCCCCCC"]);
+    handler = (q, res) => {
+      if (q.headers["x-api-key"] === "sk-ant-api03-CCCCCCCCCCCCCCCCCCCC") {
+        res.writeHead(200, { "content-type": "application/json" });
+        return void res.end("{}");
+      }
+      res.writeHead(400, { "content-type": "application/json" });
+      res.end(
+        JSON.stringify({
+          type: "error",
+          error: { type: "invalid_request_error", message: "Your credit balance is too low" },
+        }),
+      );
+    };
+    const r = await call({});
+    expect(r.status).toBe(200);
+    expect(seen).toHaveLength(3);
+  });
+
+  it("limits what a client can shape: version and OAuth betas are not forwarded", async () => {
+    await boot();
+    await call({
+      headers: {
+        "anthropic-version": "1999-01-01",
+        "anthropic-beta": "oauth-2025-04-20, claude-code-20250219",
+      },
+    });
+    expect(seen[0]!.headers["anthropic-version"]).toBe("2023-06-01");
+    expect(seen[0]!.headers["anthropic-beta"]).toBe("claude-code-20250219");
+  });
+
+  it("a 403 passes through without pausing", async () => {
+    await boot();
+    handler = (_q, res) => {
+      res.writeHead(403, { "content-type": "application/json" });
+      res.end(
+        JSON.stringify({ type: "error", error: { type: "permission_error", message: "no" } }),
+      );
+    };
+    const r = await call({});
+    expect(r.status).toBe(403);
+    expect(seen).toHaveLength(1);
+    expect(pool.status().paused).toBe(0);
+  });
+
   const rate = (retry = "30") =>
     ((_q, res) => {
       res.writeHead(429, { "content-type": "application/json", "retry-after": retry });
@@ -538,7 +703,7 @@ describe("Failover", () => {
       res.write("data: {}\n\n");
       setTimeout(() => res.destroy(), 30);
     };
-    await call({});
+    await call({}).catch(() => {});
     await sleep(100);
     expect(seen).toHaveLength(1);
     expect(pool.status().routable).toBe(2);

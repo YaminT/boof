@@ -329,6 +329,20 @@ describe("external steps in the pipeline", () => {
     }
   });
 
+  it("a tool that prints its env cannot leave a run token or key in log.txt", async () => {
+    const run = mockState.onRun;
+    mockState.onRun = async (o: RunOptions) => {
+      await run?.(o);
+      o.onChunk?.("ANTHROPIC_AUTH_TOKEN=bgw_ABCDEFGHIJKLMNOPQRSTUVWXYZ012345\n");
+      o.onChunk?.("key sk-ant-api03-LEAKEDLEAKEDLEAKED\n");
+    };
+    await runTask(await pipeline([ci()], fakeN8n()));
+    const log = await readFile(join(workingAreaDir(projectDir, "t1"), "log.txt"), "utf8");
+    expect(log).not.toContain("bgw_ABCDEFGHIJKLMNOPQRSTUVWXYZ012345");
+    expect(log).not.toContain("LEAKEDLEAKED");
+    expect(log).toContain("[redacted]");
+  });
+
   it("check task: no worktree, no tool run, steps ['n8n check', 'Finished'], payload kind check", async () => {
     const n8n = fakeN8n();
     const task = newTask(

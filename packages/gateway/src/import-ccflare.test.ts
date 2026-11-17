@@ -1,5 +1,6 @@
 import { DatabaseSync } from "node:sqlite";
 import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
 import { readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -80,12 +81,20 @@ describe("import from better-ccflare", () => {
     expect(readdirSync(dir)).toEqual(["better-ccflare.db"]);
   });
 
-  it("fails clearly for a missing file and for a file that is not a better-ccflare database", async () => {
-    await expect(scanCcflare(join(dir, "nope.db"))).rejects.toBeInstanceOf(CcflareImportError);
+  it("gives one generic error for missing, invalid, directory and FIFO paths", async () => {
     const d = new DatabaseSync(db);
     d.exec("CREATE TABLE other (x)");
     d.close();
-    await expect(scanCcflare(db)).rejects.toThrow(/not a better-ccflare database/);
+    const fifo = join(dir, "pipe");
+    execFileSync("mkfifo", [fifo]);
+    const messages: string[] = [];
+    for (const p of [join(dir, "nope.db"), db, dir, fifo]) {
+      const err = await scanCcflare(p).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(CcflareImportError);
+      messages.push((err as Error).message);
+    }
+    expect(new Set(messages).size).toBe(1);
+    expect(messages[0]).not.toContain(dir);
   });
 
   it("looks in ~/.config/better-ccflare by default", () => {
