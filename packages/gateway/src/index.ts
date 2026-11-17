@@ -5,3 +5,4 @@ export * from "./redact.js";
 export * from "./tokens.js";
 export * from "./server.js";
 export * from "./usage-tap.js";
+export * from "./proxy-agent.js";

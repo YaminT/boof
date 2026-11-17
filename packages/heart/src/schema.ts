@@ -557,6 +557,27 @@ export const OwlishSettingsSchema = z.strictObject({
   healthGate: z.enum(["pause", "warn", "off"]).default("pause"),
 });
 
+/**
+ * The account pool backend. Absent: `owlish` set means `better-ccflare`, otherwise `none`.
+ * `internal` is boof's own loopback gateway for Anthropic API keys (keys live in
+ * `<data>/gateway/accounts.json`, never in settings). `strategy` applies to `internal` only.
+ */
+export const GatewaySettingsSchema = z.strictObject({
+  mode: z.enum(["internal", "better-ccflare", "none"]),
+  strategy: z.enum(["ordered", "round-robin"]).optional(),
+  healthGate: z.enum(["pause", "warn", "off"]).optional(),
+});
+export type GatewayMode = "internal" | "better-ccflare" | "none";
+
+/** How the pool settings resolve: `gateway.mode`, else `better-ccflare` when `owlish` is set, else `none`. */
+export function resolveGatewayMode(settings: {
+  gateway?: { mode: GatewayMode } | undefined;
+  owlish?: unknown;
+}): GatewayMode {
+  if (settings.gateway) return settings.gateway.mode;
+  return settings.owlish ? "better-ccflare" : "none";
+}
+
 /** Shared URL parser and policy for settings validation and runtime routing. */
 export function parseOwlishGatewayUrl(value: string): URL | null {
   if (/[\u0000-\u0020\u007f]/.test(value) || value.endsWith("?") || value.endsWith("#"))
@@ -709,6 +730,8 @@ export const SettingsSchema = z.object({
   concierge: ConciergeSettingsSchema.optional(),
   /** The optional better-ccflare account pool. */
   owlish: OwlishSettingsSchema.optional(),
+  /** Which pool backend is used (see {@link GatewaySettingsSchema}). Absent: resolved from `owlish`. */
+  gateway: GatewaySettingsSchema.optional(),
   /** Webhook subscriptions; managed through the webhooks operations (admin), never PUT /settings. */
   webhooks: z.array(WebhookSchema).optional(),
   /** The optional n8n instance; managed through the n8n operations, never PUT /settings. */
@@ -763,6 +786,8 @@ export const SettingsPatchSchema = z
     budget: BudgetSettingsSchema.optional(),
     /** The account pool; `null` removes it (the key is handled by settings.update, never stored here). */
     owlish: OwlishSettingsSchema.nullable().optional(),
+    /** The pool backend; `null` removes it (back to the mode resolved from `owlish`). */
+    gateway: GatewaySettingsSchema.nullable().optional(),
     models: z.record(z.string(), z.array(z.string())).optional(),
     /** `false` stops the daily release request. There is no download. */
     updates: z.strictObject({ check: z.boolean() }).optional(),

@@ -708,7 +708,7 @@ export class RunnerEngine {
         project,
         dataRoot: this.root,
         pool: this.pool,
-        gateway: await this.pool.gateway(),
+        gateway: await this.pool.gateway({ runId: id, projectId: project.id }),
         agentAuth: this.agentAuth,
         ...(this.external ? { external: this.external } : {}),
         ...(this.serverPort !== undefined ? { serverPort: this.serverPort } : {}),
@@ -718,6 +718,7 @@ export class RunnerEngine {
       return { kind: "ran", outcome, projectId: project.id };
     };
     const p = run().finally(() => {
+      this.pool.releaseRun(sel.task.frontmatter.id).catch(() => {});
       this.inflight.delete(project.id);
       this.runningTasks.delete(project.id);
     });

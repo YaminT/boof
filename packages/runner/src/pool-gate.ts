@@ -1,9 +1,11 @@
 import { createHash } from "node:crypto";
-import { appendEvent, type Settings } from "@boof/heart";
+import { appendEvent, resolveGatewayMode, type Settings } from "@boof/heart";
 import {
   ABSENT_POOL,
   agentKeyIsSeparate,
   OwlishClient,
+  sharedInternalBackend,
+  type InternalPoolBackend,
   type AdminRouteProbe,
   type PoolStatus,
 } from "@boof/owlish";
@@ -45,6 +47,8 @@ export interface PoolGateOptions {
   readKey: () => Promise<string | null>;
   /** The api-only agent key. The only gateway credential a pool-routed child receives. */
   readAgentKey: () => Promise<string | null>;
+  /** Internal mode: the pool and loopback gateway. Default: the shared one for `root`. Tests inject. */
+  internal?: InternalPoolBackend;
   now?: () => number;
   /** Tests inject a fake clock: waiting advances it. */
   sleep?: (ms: number) => Promise<void>;
@@ -80,12 +84,47 @@ export class PoolGate {
    * or when the only credential is the admin key. The api key is `owlishAgentKey`
    * only. A gateway with no keys is returned without one. The admin key is never returned.
    */
-  async gateway(): Promise<Gateway | undefined> {
-    const owlish = (await this.opts.loadSettings()).owlish;
+  async gateway(run?: { runId: string; projectId?: string | null }): Promise<Gateway | undefined> {
+    const settings = await this.opts.loadSettings();
+    const mode = resolveGatewayMode(settings);
+    if (mode === "internal") return this.internalGateway(settings, run);
+    if (mode === "none") return undefined;
+    const owlish = settings.owlish;
     if (!owlish) return undefined;
     const cred = await this.childCredential();
     if (cred.kind !== "ok") return undefined;
     return { url: owlish.url, ...(cred.apiKey ? { apiKey: cred.apiKey } : {}) };
+  }
+
+  /** The internal pool for these settings (strategy applied), or null in the other modes. */
+  private async internal(settings: Settings): Promise<InternalPoolBackend | null> {
+    if (resolveGatewayMode(settings) !== "internal") return null;
+    const backend = this.opts.internal ?? sharedInternalBackend(this.opts.root);
+    await backend.setStrategy(settings.gateway?.strategy);
+    return backend;
+  }
+
+  /**
+   * Internal mode: a fresh run token and the loopback address. The child never sees an account key.
+   * Without a run id the call has nothing to bind a token to, so none is given. The token is
+   * revoked by {@link releaseRun}.
+   */
+  private async internalGateway(
+    settings: Settings,
+    run?: { runId: string; projectId?: string | null },
+  ): Promise<Gateway | undefined> {
+    const backend = await this.internal(settings);
+    if (!backend || !run) return undefined;
+    // An empty pool has nothing to route to: the agent keeps its own sign-in (the Doctor warns).
+    if ((await backend.accountCount()) === 0) return undefined;
+    const g = await backend.childGateway(run);
+    return g;
+  }
+
+  /** Revoke the run's tokens (the step is over). Safe to call twice and when none were minted. */
+  async releaseRun(runId: string): Promise<void> {
+    const backend = this.opts.internal ?? sharedInternalBackend(this.opts.root);
+    await backend.releaseRun(runId).catch(() => {});
   }
 
   /**
@@ -94,6 +133,7 @@ export class PoolGate {
    * gateway did not answer (`unreachable`: the task waits, the key is not known to be wrong).
    */
   async agentCredentialBlock(): Promise<string | null> {
+    if (resolveGatewayMode(await this.opts.loadSettings()) !== "better-ccflare") return null;
     const cred = await this.childCredential();
     return cred.kind === "blocked" ? POOL_AGENT_KEY_REQUIRED : null;
   }
@@ -105,7 +145,10 @@ export class PoolGate {
    * answer. The admin key is never returned.
    */
   async childCredential(): Promise<PoolChildCredential> {
-    const owlish = (await this.opts.loadSettings()).owlish;
+    const settings = await this.opts.loadSettings();
+    // Internal mode has no admin route and no admin key: every child gets its own run token.
+    if (resolveGatewayMode(settings) !== "better-ccflare") return { kind: "ok" };
+    const owlish = settings.owlish;
     if (!owlish) return { kind: "ok" };
     let admin: string | null = null;
     let agent: string | null = null;
@@ -156,7 +199,22 @@ export class PoolGate {
 
   /** The pool and whether routed work is blocked. Never throws on a gateway failure. */
   async check(opts: { fresh?: boolean } = {}): Promise<PoolCheck> {
-    const owlish = (await this.opts.loadSettings()).owlish;
+    const settings = await this.opts.loadSettings();
+    const mode = resolveGatewayMode(settings);
+    if (mode === "internal") {
+      const policy = settings.gateway?.healthGate ?? "pause";
+      if (policy === "off") {
+        this.episode = false;
+        return { blocked: false, pool: { ...ABSENT_POOL }, policy };
+      }
+      const backend = await this.internal(settings);
+      const pool = await backend!.health();
+      // No accounts at all is not an outage to wait for: agents use their own sign-in, as with `none`.
+      const blocked = policy === "pause" && BLOCKING.has(pool.status);
+      if (!blocked) this.episode = false;
+      return { blocked, pool, policy };
+    }
+    const owlish = mode === "better-ccflare" ? settings.owlish : undefined;
     if (!owlish) {
       this.episode = false;
       return { blocked: false, pool: { ...ABSENT_POOL }, policy: null };

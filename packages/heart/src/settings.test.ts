@@ -744,3 +744,29 @@ describe("orchestration profiles", () => {
     expect(loaded.profiles).toHaveLength(2);
   });
 });
+
+describe("settings.gateway", () => {
+  it("resolves the mode: explicit, else better-ccflare when owlish is set, else none", async () => {
+    const { resolveGatewayMode } = await import("./schema.js");
+    expect(resolveGatewayMode(defaultSettings())).toBe("none");
+    expect(resolveGatewayMode({ owlish: { url: "http://localhost:8080" } })).toBe("better-ccflare");
+    expect(resolveGatewayMode({ gateway: { mode: "internal" }, owlish: { url: "http://x" } })).toBe(
+      "internal",
+    );
+  });
+
+  it("is absent by default, stored by update, and removed with null", async () => {
+    const store = new SettingsStore(root);
+    expect((await store.load()).gateway).toBeUndefined();
+    const saved = await store.update({ gateway: { mode: "internal", strategy: "round-robin" } });
+    expect(saved.gateway).toEqual({ mode: "internal", strategy: "round-robin" });
+    expect((await new SettingsStore(root).load()).gateway?.mode).toBe("internal");
+    expect((await store.update({ gateway: null })).gateway).toBeUndefined();
+  });
+
+  it("rejects unknown keys and modes", async () => {
+    const { GatewaySettingsSchema } = await import("./schema.js");
+    expect(GatewaySettingsSchema.safeParse({ mode: "other" }).success).toBe(false);
+    expect(GatewaySettingsSchema.safeParse({ mode: "internal", port: 1 }).success).toBe(false);
+  });
+});

@@ -1,5 +1,5 @@
 import type { Project, Settings } from "@boof/heart";
-import { claudeAgentConfigDir, isAnthropicApiKey } from "@boof/heart";
+import { claudeAgentConfigDir, isAnthropicApiKey, resolveGatewayMode } from "@boof/heart";
 import { chmod, mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 import {
@@ -8,6 +8,8 @@ import {
   decideAgentAuth,
   OwlishClient,
   ProjectKeyStore,
+  sharedInternalBackend,
+  type InternalPoolBackend,
   type AgentAuth,
   type AgentAuthDecision,
   type AgentSdkEligibility,
@@ -34,6 +36,8 @@ export interface AgentAuthResolverOptions {
   projectKeys?: ProjectKeyStore;
   fetch?: typeof fetch;
   now?: () => number;
+  /** Internal mode: the pool and loopback gateway. Default: the shared one for `root`. Tests inject. */
+  internal?: InternalPoolBackend;
 }
 
 export type AgentAuthResolution =
@@ -74,9 +78,34 @@ export class AgentAuthResolver {
     const fresh = typeof options === "boolean" ? options : options.fresh === true;
     try {
       const settings = await this.options.loadSettings();
-      const gateway = settings.owlish;
+      const mode = resolveGatewayMode(settings);
+      const gateway = mode === "better-ccflare" ? settings.owlish : undefined;
       const choice = project.claudeAgent?.auth ?? "gateway";
       const hasProjectKey = await this.projectKeys.has(project.id);
+      if (mode === "internal" && choice === "gateway") {
+        // Every account of the internal pool is an API-key account by construction, so any account
+        // makes claude-agent eligible; the child gets a run token, never a key.
+        const accounts = await this.internal().accountCount();
+        const checkedAt = new Date(this.now()).toISOString();
+        return decideAgentAuth({
+          projectName: project.name,
+          choice,
+          gatewayConfigured: true,
+          eligibility:
+            accounts > 0
+              ? { gateway: "checked", allowed: true, reason: "", blocking: [], checkedAt }
+              : {
+                  gateway: "checked",
+                  allowed: false,
+                  reason: "the internal account pool has no accounts",
+                  blocking: [],
+                  checkedAt,
+                },
+          hasProjectKey,
+          hasAgentKey: true,
+          keysAreSeparate: true,
+        });
+      }
       let agentKey: string | null = null;
       if (choice === "gateway" && gateway) {
         try {
@@ -261,9 +290,15 @@ export class AgentAuthResolver {
     }
   }
 
+  private internal(): InternalPoolBackend {
+    return this.options.internal ?? sharedInternalBackend(this.options.root);
+  }
+
+  /** `runId` binds an internal-gateway token to the run, so it is revoked when the run ends. */
   async credentials(
     project: Project,
     decision: AgentAuthDecision & { ok: true },
+    runId?: string,
   ): Promise<AgentAuth> {
     if (decision.via === "project-key") {
       try {
@@ -276,6 +311,20 @@ export class AgentAuthResolver {
       } catch (error) {
         if (error instanceof AgentAuthRefusedError) throw error;
         throw new AgentAuthRefusedError(refusal(project, "the project key store cannot be read"));
+      }
+    }
+    if (
+      resolveGatewayMode(await this.options.loadSettings().catch(() => ({}) as Settings)) ===
+      "internal"
+    ) {
+      try {
+        const g = await this.internal().childGateway({
+          runId: runId ?? `agent-${project.id}`,
+          projectId: project.id,
+        });
+        return { kind: "gateway", url: g.url, apiKey: g.apiKey };
+      } catch {
+        throw new AgentAuthRefusedError(refusal(project, "the internal gateway could not start"));
       }
     }
     try {

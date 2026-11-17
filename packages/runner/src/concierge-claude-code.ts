@@ -15,6 +15,7 @@ import {
   type ConciergeTurnInput,
   type ConciergeTurnResult,
   type Project,
+  resolveGatewayMode,
   type Settings,
   type TokenUsage,
 } from "@boof/heart";
@@ -240,7 +241,7 @@ export class ClaudeCodeConcierge implements ConciergeAgent {
     if (!env?.bridge) return no(NO_BRIDGE_REASON);
     try {
       const settings = await this.loadSettings();
-      if (settings.owlish) {
+      if (resolveGatewayMode(settings) !== "none") {
         const block = await this.pool.agentCredentialBlock();
         if (block) return no(block);
         const check = await this.pool.check();
@@ -265,13 +266,14 @@ export class ClaudeCodeConcierge implements ConciergeAgent {
 
     let settings: Settings;
     let gateway: Awaited<ReturnType<PoolGate["gateway"]>>;
+    const runId = `concierge-${randomBytes(8).toString("hex")}`;
     try {
       settings = await this.loadSettings();
-      if (settings.owlish) {
+      if (resolveGatewayMode(settings) === "better-ccflare") {
         const block = await this.pool.agentCredentialBlock();
         if (block) throw new ConciergeTurnError(block, "refused", null, null);
       }
-      gateway = await this.pool.gateway();
+      gateway = await this.pool.gateway({ runId });
     } catch (error) {
       if (error instanceof ConciergeTurnError) throw error;
       throw new ConciergeTurnError(messageOf(error), "failed", null, null);
@@ -504,6 +506,7 @@ export class ClaudeCodeConcierge implements ConciergeAgent {
         sessionId,
       );
     } finally {
+      await this.pool.releaseRun(runId);
       input.signal?.removeEventListener("abort", onAbort);
       if (buf.trim()) handleLine(buf);
       buf = "";

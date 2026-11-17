@@ -6,7 +6,7 @@ export type Package =
 /** Which packages a package may import; imports within one package are not checked. */
 export const ALLOWED: Record<Package, Package[]> = {
   heart: [],
-  owlish: ["heart"],
+  owlish: ["heart", "gateway"],
   gateway: ["heart"],
   runner: ["heart", "owlish"],
   // Server task diffs use the runner-owned worktree record to pin Git metadata.

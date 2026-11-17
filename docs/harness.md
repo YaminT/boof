@@ -201,7 +201,7 @@ Fix errors this way:
 Boof has two ways to call the same operations. Both use the same scopes, trust rules, validation and error codes.
 
 - REST over HTTP under `$BOOF_URL/api/v1`. It always works. This guide shows curl commands.
-- MCP (Model Context Protocol). If your host supports MCP, MCP gives you typed tools. There are 85 tools, named `boof_<verb>_<noun>`. The full list is below. Each REST operation in section 7 lists its MCP tool, if it has one. Every operation has a tool except attachment upload and download, which are REST only. `tools/list` shows only the tools your scopes allow, and a call outside them answers `forbidden_scope`.
+- MCP (Model Context Protocol). If your host supports MCP, MCP gives you typed tools. There are 87 tools, named `boof_<verb>_<noun>`. The full list is below. Each REST operation in section 7 lists its MCP tool, if it has one. Every operation has a tool except attachment upload and download, which are REST only. `tools/list` shows only the tools your scopes allow, and a call outside them answers `forbidden_scope`.
 
 ### MCP over HTTP (remote)
 
@@ -272,7 +272,7 @@ curl -sS "$BOOF_URL/mcp" -H "Authorization: Bearer $BOOF_KEY" \
 
 The reply to a request with an `id` is one JSON-RPC message: `{"jsonrpc":"2.0","id":3,"result":{...}}` or `{"jsonrpc":"2.0","id":3,"error":{"code":...,"message":"..."}}`. The reply may come as `Content-Type: application/json` (the body is the message) or as `Content-Type: text/event-stream` (the body is `event: message` and `data: <json>` lines). Parse by the `Content-Type` header. For a stream, take the `data:` line and parse its JSON. The current server answers with `application/json`; a client library handles both.
 
-Tools (85). Arguments that name a project use `projectId`; plan tools use `planId`; task tools use `taskId`. Section 7 lists the arguments of each tool.
+Tools (87). Arguments that name a project use `projectId`; plan tools use `planId`; task tools use `taskId`. Section 7 lists the arguments of each tool.
 
 | Area                       | Tools                                                                                                                                                                                                                                                                                                                                                                                         |
 | -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -286,7 +286,7 @@ Tools (85). Arguments that name a project use `projectId`; plan tools use `planI
 | Command templates          | `boof_list_commands`, `boof_create_command`, `boof_update_command`, `boof_delete_command`                                                                                                                                                                                                                                                                                                     |
 | API clients                | `boof_list_clients`, `boof_create_client`, `boof_revoke_client`, `boof_rotate_client`                                                                                                                                                                                                                                                                                                         |
 | Webhooks                   | `boof_list_webhooks`, `boof_create_webhook`, `boof_update_webhook`, `boof_delete_webhook`                                                                                                                                                                                                                                                                                                     |
-| Account pool               | `boof_list_accounts`, `boof_get_agent_sdk_eligibility`, `boof_get_pool_health`, `boof_pause_account`, `boof_resume_account`, `boof_set_account_priority`, `boof_set_account_thresholds`                                                                                                                                                                                                       |
+| Account pool               | `boof_list_accounts`, `boof_get_agent_sdk_eligibility`, `boof_get_pool_health`, `boof_pause_account`, `boof_resume_account`, `boof_set_account_priority`, `boof_set_account_thresholds`, `boof_add_account`, `boof_remove_account`                                                                                                                                                            |
 | n8n                        | `boof_get_n8n`, `boof_update_n8n`, `boof_delete_n8n`, `boof_list_n8n_workflows`, `boof_refresh_n8n_workflows`                                                                                                                                                                                                                                                                                 |
 
 MCP results: `result.content[0].text` is a one-line summary. `result.content[1].text` is the JSON. `result.structuredContent` is the result object. A failure has `result.isError: true` and the text `<error_code>: <message> <details-json>`. The error codes are the codes in section 5.
@@ -614,6 +614,7 @@ Every error has this shape:
 | `browser_sessions_unavailable` | 503    | The same for browser sign-in. Tell the user to read the server log; do not retry.                                                                                                                    |
 | `rate_limited`                 | 429    | Wait `Retry-After` seconds. Then retry with the same request.                                                                                                                                        |
 | `not_configured`               | 409    | No account pool (better-ccflare) is set up. Tell the user to set `settings.owlish`; do not retry.                                                                                                    |
+| `not_supported`                | 409    | The operation does not fit the pool backend in use (thresholds in the internal pool; add or remove while better-ccflare is in use). Change `settings.gateway.mode` or skip it; do not retry.         |
 | `n8n_not_configured`           | 409    | No n8n instance is configured. Tell the user to connect n8n in the settings; do not retry.                                                                                                           |
 | `upstream_failed`              | 502    | The n8n instance failed or refused the call. Read `details.reason` (`unauthorized`, `unreachable`, `blocked`, `redirected`, `bad_response`, `too_many`, `HTTP <n>`), tell the user, and retry later. |
 | `invalid_step_token`           | 401    | Only n8n's callback gets this: the run token is missing, wrong, used or expired. Do not retry with the same token.                                                                                   |
@@ -668,7 +669,7 @@ These need no key:
 
 This section is generated from the operations registry. Do not edit it by hand.
 
-There are 92 operations. Every path below starts with `/api/v1`.
+There are 97 operations. Every path below starts with `/api/v1`.
 Every operation can also fail with `401 unauthenticated`, `413 payload_too_large`, `421 host_not_allowed`, `429 rate_limited` and `500 internal`.
 
 ### Shared object shapes
@@ -1871,6 +1872,7 @@ JSON body (unknown keys are rejected):
 - `budget`: `{ onExceed?: "pause" | "fail", perDayUsd?: number, perProjectDayUsd?: number, perTaskUsd?: number, perToolDayUsd?: { [key: string]: number }, timezone?: string }`, optional
 - `defaultProject`: `kebab-id | null`, optional
 - `expectedUpdated`: `string`, optional; The settings ETag you last saw (HTTP: If-Match). A stale value is refused with 409 settings_modified. Omit it for an unconditional write; max length 100
+- `gateway`: `{ healthGate?: "pause" | "warn" | "off", mode: "internal" | "better-ccflare" | "none", strategy?: "ordered" | "round-robin" } | null`, optional
 - `models`: `{ [key: string]: string[] }`, optional
 - `owlish`: `{ healthGate?: "pause" | "warn" | "off", url: string } | null`, optional
 - `owlishAgentKey`: `string | null`, optional; An api-only better-ccflare key that claude-agent processes receive as ANTHROPIC_API_KEY; boof keeps the admin client key to itself. Write-only: stored beside the client key (owlish/secrets.json, mode 0600) and never returned. null removes the stored key (BOOF_OWLISH_AGENT_KEY, when set, still wins)
@@ -2167,6 +2169,36 @@ Path parameters (all required):
 JSON body (unknown keys are rejected):
 
 - `thresholds`: `{ [key: string]: number 0..100 | null }`, required
+
+#### `POST /api/v1/accounts` (Add an API-key account)
+
+- Operation: `accounts.add`
+- Scope: `settings:write`
+- MCP tool: `boof_add_account`
+- CLI: `boof-runner accounts add`
+- What it does: Adds an Anthropic Console API key (sk-ant-api...) to boof's internal account pool. Inputs: name, apiKey, optional priority (0 to 100, lower is used first). The key is write-only: it is stored in <data>/gateway/accounts.json (mode 0600) and never returned, logged or audited. Subscription (OAuth) tokens are not accepted. Needs settings:write and a trusted, project-unrestricted client. 409 not_supported unless settings.gateway.mode is internal.
+- Success: HTTP 200 with `{ account: { id: string, name: string, paused?: boolean, priority?: number, provider?: string, rateLimitReset?: string | number | null, rateLimitStatus?: string, tokenStatus?: string } }`.
+- Errors: `403 forbidden_scope`, `400 invalid_input`
+
+JSON body (unknown keys are rejected):
+
+- `apiKey`: `string`, required; min length 20; max length 300
+- `name`: `string`, required; max length 80
+- `priority`: `integer 0..100`, optional
+
+#### `DELETE /api/v1/accounts/{accountId}` (Remove an account)
+
+- Operation: `accounts.remove`
+- Scope: `settings:write`
+- MCP tool: `boof_remove_account`
+- CLI: `boof-runner accounts remove`
+- What it does: Removes an account from boof's internal account pool and deletes its stored key. Input: accountId. Needs settings:write and a trusted, project-unrestricted client. 409 not_supported unless settings.gateway.mode is internal; 404 when the account does not exist.
+- Success: HTTP 200 with `{ ok: true }`.
+- Errors: `403 forbidden_scope`, `400 invalid_input`
+
+Path parameters (all required):
+
+- `accountId`: `string`, required; better-ccflare account id (see accounts.list); max length 200
 
 ### Webhooks (admin)
 

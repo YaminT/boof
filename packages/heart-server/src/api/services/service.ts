@@ -2,6 +2,10 @@ import { createHash } from "node:crypto";
 import {
   ABSENT_POOL,
   OwlishClient,
+  PoolBackendError,
+  sharedInternalBackend,
+  type InternalPoolBackend,
+  type PoolBackend,
   OwlishError,
   OwlishSecretStore,
   type AdminRouteProbe,
@@ -19,6 +23,8 @@ import { gitCheck, writableDirCheck, type DoctorCheck, type ToolReadiness } from
 import { isAbsolute, join, resolve } from "node:path";
 import {
   agentStatus,
+  resolveGatewayMode,
+  type GatewayMode,
   AuthStore,
   appendEvent,
   AttachmentStore,
@@ -987,7 +993,18 @@ export class TaskService {
    * an unreadable or missing key is a closed gate with a key-free reason. `refresh` skips the 10 s cache.
    */
   async agentSdkEligibility(refresh = false): Promise<AgentSdkEligibility> {
-    const owlish = (await this.loadSettings()).owlish;
+    const settings = await this.loadSettings();
+    if (resolveGatewayMode(settings) === "internal") {
+      const accounts = await (await this.internalPool()).accountCount();
+      return {
+        gateway: "checked",
+        allowed: accounts > 0,
+        reason: accounts > 0 ? "" : "the internal account pool has no accounts",
+        blocking: [],
+        checkedAt: new Date().toISOString(),
+      };
+    }
+    const owlish = resolveGatewayMode(settings) === "better-ccflare" ? settings.owlish : undefined;
     const closed = (reason: string): AgentSdkEligibility => ({
       gateway: "checked",
       allowed: false,
@@ -1084,8 +1101,37 @@ export class TaskService {
         });
         continue;
       }
-      const gateway = settings.owlish;
       const useGateway = (project.claudeAgent?.auth ?? "gateway") === "gateway";
+      if (resolveGatewayMode(settings) === "internal" && useGateway) {
+        // Every account of the internal pool is an API-key account, and the child gets a run token.
+        const accounts = await (await this.internalPool()).accountCount();
+        const hasKey = await this.hasProjectKey(project.id);
+        const decision = decideAgentAuth({
+          projectName: project.name,
+          choice: "gateway",
+          gatewayConfigured: true,
+          eligibility: {
+            gateway: "checked",
+            allowed: accounts > 0,
+            reason: accounts > 0 ? "" : "the internal account pool has no accounts",
+            blocking: [],
+            checkedAt: new Date().toISOString(),
+          },
+          hasProjectKey: hasKey,
+          hasAgentKey: true,
+          keysAreSeparate: true,
+        });
+        result.push({
+          projectId: project.id,
+          roles: [...roles],
+          allowed: decision.ok,
+          via: decision.ok ? decision.via : null,
+          reason: decision.ok ? null : decision.reason,
+        });
+        continue;
+      }
+      const gateway =
+        resolveGatewayMode(settings) === "better-ccflare" ? settings.owlish : undefined;
       let agentKey: string | null = null;
       let adminKey: string | null = null;
       try {
@@ -1204,8 +1250,28 @@ export class TaskService {
     return roles;
   }
 
-  /** The pool right now: `absent` (no request) without `settings.owlish`; never throws. */
+  /** The pool backend in use: `gateway.mode`, else `better-ccflare` when `owlish` is set, else `none`. */
+  async poolMode(): Promise<GatewayMode> {
+    return resolveGatewayMode(await this.loadSettings());
+  }
+
+  /** The internal pool of this data root, with the configured strategy. Shared with the runner in this process. */
+  async internalPool(): Promise<InternalPoolBackend> {
+    const settings = await this.loadSettings();
+    const backend = sharedInternalBackend(this.root);
+    await backend.setStrategy(settings.gateway?.strategy);
+    return backend;
+  }
+
+  /** The pool right now: `absent` (no request) without a pool; never throws. */
   async poolStatus(): Promise<PoolStatus> {
+    if ((await this.poolMode().catch(() => "none")) === "internal") {
+      try {
+        return await (await this.internalPool()).health();
+      } catch {
+        return { ...ABSENT_POOL };
+      }
+    }
     try {
       const pool = await this.owlishClient();
       return pool ? await pool.client.health() : { ...ABSENT_POOL };
@@ -1217,7 +1283,15 @@ export class TaskService {
   }
 
   /** Run a gateway call: an absent pool is 409, a gateway failure 502 (no key, no response body). */
-  async withPool<T>(fn: (client: OwlishClient) => Promise<T>): Promise<T> {
+  async withPool<T>(fn: (client: PoolBackend) => Promise<T>): Promise<T> {
+    if ((await this.poolMode()) === "internal") {
+      try {
+        return await fn(await this.internalPool());
+      } catch (err) {
+        if (err instanceof PoolBackendError) throw new OpError(err.status, err.message, err.code);
+        throw err;
+      }
+    }
     const pool = await this.owlishClient();
     if (!pool) {
       throw new OpError(

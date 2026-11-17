@@ -40,6 +40,7 @@ import {
   branchHead,
   currentBranch,
   isGitRepo,
+  resolveGatewayMode,
   SandboxUnavailableError,
   sumUsage,
   UsageStore,
@@ -426,6 +427,8 @@ export class Pipeline {
         "sandbox policy needs the data root, the project and a temp directory",
       );
     }
+    // The internal gateway listens on loopback; the sandbox must let the agent reach that port.
+    const gatewayPort = loopbackPort(this.deps.gateway?.url);
     return {
       dataRoot: this.deps.dataRoot,
       projectId: this.deps.project.id,
@@ -434,6 +437,7 @@ export class Pipeline {
       mainCheckout: this.deps.settings.workingDirectory,
       runTempDir: this.runTempDir,
       ...(this.deps.serverPort !== undefined ? { serverPort: this.deps.serverPort } : {}),
+      ...(gatewayPort !== undefined ? { gatewayPort } : {}),
     };
   }
 
@@ -590,7 +594,7 @@ export class Pipeline {
               void this.log(id, `\n${decision.note}`);
               authNoteLogged = true;
             }
-            const auth = await this.deps.agentAuth.credentials(this.deps.project, decision);
+            const auth = await this.deps.agentAuth.credentials(this.deps.project, decision, id);
             authOptions = {
               agentAuth: auth,
               claudeConfigDir,
@@ -603,7 +607,11 @@ export class Pipeline {
               ),
             };
           }
-          if (tool.acceptsPool && this.deps.settings.owlish && !this.deps.gateway)
+          if (
+            tool.acceptsPool &&
+            resolveGatewayMode(this.deps.settings) === "better-ccflare" &&
+            !this.deps.gateway
+          )
             throw new Error(POOL_AGENT_KEY_REQUIRED);
           const result = await tool.run({
             ...opts,
@@ -1894,5 +1902,17 @@ export class Pipeline {
   private async mirrorLiveLog(task: Task): Promise<void> {
     const text = await readFile(join(this.areaDir(task.frontmatter.id), "log.txt"), "utf8");
     if (text.trim()) task.body.log = text;
+  }
+}
+
+/** The port of a `http://127.0.0.1:<port>` gateway URL, else undefined (better-ccflare is not ours to open). */
+function loopbackPort(url: string | undefined): number | undefined {
+  if (!url) return undefined;
+  try {
+    const u = new URL(url);
+    if (u.protocol !== "http:" || u.hostname !== "127.0.0.1" || !u.port) return undefined;
+    return Number(u.port);
+  } catch {
+    return undefined;
   }
 }
