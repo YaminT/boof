@@ -198,6 +198,7 @@ describe("import boundaries", () => {
       expect.arrayContaining([
         ["packages/heart", "heart"],
         ["packages/owlish", "owlish"],
+        ["packages/gateway", "gateway"],
         ["packages/runner", "runner"],
         ["packages/heart-server", "heart-server"],
         ["packages/facedisk", "facedisk"],
@@ -207,6 +208,7 @@ describe("import boundaries", () => {
     );
     expect(partOfFile("packages/heart/src/schema.ts")).toBe("heart");
     expect(partOfFile("packages/owlish/src/owlish.ts")).toBe("owlish");
+    expect(partOfFile("packages/gateway/src/pool.ts")).toBe("gateway");
     expect(partOfFile("packages/runner/src/engine.ts")).toBe("runner");
     expect(partOfFile("packages/heart-server/src/api/x.ts")).toBe("heart-server");
     expect(partOfFile("packages/heart-server/src/mcp/x.ts")).toBe("heart-server");

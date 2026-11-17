@@ -1,12 +1,13 @@
 import { dirname, isAbsolute, join, normalize, relative } from "node:path";
 
 export type Package =
-  "heart" | "owlish" | "runner" | "heart-server" | "facedisk" | "bin" | "desktop";
+  "heart" | "owlish" | "gateway" | "runner" | "heart-server" | "facedisk" | "bin" | "desktop";
 
 /** Which packages a package may import; imports within one package are not checked. */
 export const ALLOWED: Record<Package, Package[]> = {
   heart: [],
   owlish: ["heart"],
+  gateway: ["heart"],
   runner: ["heart", "owlish"],
   // Server task diffs use the runner-owned worktree record to pin Git metadata.
   "heart-server": ["heart", "owlish", "runner"],
@@ -36,6 +37,7 @@ export const SOURCE_ROOTS = [
 const PACKAGE_ID: Record<string, Package> = {
   heart: "heart",
   owlish: "owlish",
+  gateway: "gateway",
   runner: "runner",
   "heart-server": "heart-server",
   facedisk: "facedisk",

@@ -25,7 +25,7 @@
     },
     "bin": {
       "name": "@boof/boof",
-      "version": "0.5.0",
+      "version": "0.7.0",
       "dependencies": {
         "@anthropic-ai/claude-agent-sdk": "0.3.322",
         "@boof/facedisk": "*",
@@ -44,7 +44,7 @@
     },
     "packages/desktop": {
       "name": "@boof/desktop",
-      "version": "0.5.0",
+      "version": "0.7.0",
       "dependencies": {
         "@boof/boof": "*",
         "@boof/heart": "*",
@@ -63,7 +63,7 @@
     },
     "packages/facedisk": {
       "name": "@boof/facedisk",
-      "version": "0.5.0",
+      "version": "0.7.0",
       "dependencies": {
         "@boof/heart": "*",
         "@boof/heart-server": "*",
@@ -94,9 +94,17 @@
         "vite": "^8.0.0",
       },
     },
+    "packages/gateway": {
+      "name": "@boof/gateway",
+      "version": "0.7.0",
+      "dependencies": {
+        "@boof/heart": "*",
+        "zod": "^4.6.7",
+      },
+    },
     "packages/heart": {
       "name": "@boof/heart",
-      "version": "0.5.0",
+      "version": "0.7.0",
       "dependencies": {
         "fast-xml-parser": "^5.12.0",
         "gray-matter": "^4.0.3",
@@ -105,11 +113,11 @@
     },
     "packages/heart-server": {
       "name": "@boof/heart-server",
-      "version": "0.5.0",
+      "version": "0.7.0",
       "dependencies": {
         "@boof/heart": "*",
-        "@boof/runner": "*",
         "@boof/owlish": "*",
+        "@boof/runner": "*",
         "@hono/node-server": "^2.1.6",
         "@modelcontextprotocol/sdk": "~1.32.2",
         "chokidar": "^6.0.0",
@@ -119,7 +127,7 @@
     },
     "packages/owlish": {
       "name": "@boof/owlish",
-      "version": "0.5.0",
+      "version": "0.7.0",
       "dependencies": {
         "@boof/heart": "*",
         "zod": "^4.6.7",
@@ -127,7 +135,7 @@
     },
     "packages/runner": {
       "name": "@boof/runner",
-      "version": "0.5.0",
+      "version": "0.7.0",
       "dependencies": {
         "@anthropic-ai/claude-agent-sdk": "0.3.322",
         "@boof/heart": "*",
@@ -179,6 +187,8 @@
     "@boof/desktop": ["@boof/desktop@workspace:packages/desktop"],
 
     "@boof/facedisk": ["@boof/facedisk@workspace:packages/facedisk"],
+
+    "@boof/gateway": ["@boof/gateway@workspace:packages/gateway"],
 
     "@boof/heart": ["@boof/heart@workspace:packages/heart"],
 
