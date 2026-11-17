@@ -147,10 +147,8 @@ export const OP_COVERAGE: Record<string, { where: string } | { none: string }> =
   "accounts.resume": { where: "accountAction — AccountsPage (resume an account)" },
   "accounts.priority": { where: "accountPriority — AccountsPage (routing priority)" },
   "accounts.thresholds": { where: "accountThresholds — AccountsPage (usage pause thresholds)" },
-  "accounts.add": { none: "the internal-pool add form comes with the Accounts page mode switch" },
-  "accounts.remove": {
-    none: "the internal-pool remove button comes with the Accounts page mode switch",
-  },
+  "accounts.add": { where: "addAccount — AccountsPage (internal pool: add an API-key account)" },
+  "accounts.remove": { where: "removeAccount — AccountsPage (internal pool: remove an account)" },
   "webhooks.list": { where: "listWebhooks \u2014 Webhooks (the webhook list)" },
   "webhooks.create": {
     where: "createWebhook \u2014 Webhooks (new webhook; the secret is shown once)",
