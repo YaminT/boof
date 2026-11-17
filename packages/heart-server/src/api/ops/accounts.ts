@@ -264,6 +264,33 @@ export const accountsRemove = defineOp({
   },
 });
 
+export const accountsImport = defineOp({
+  name: "accounts.import",
+  title: "Import API-key accounts from better-ccflare",
+  description:
+    "One-time import of the Anthropic API-key accounts (provider claude-console-api) of a better-ccflare database into boof's internal account pool. The database is opened read-only. Subscription (OAuth) and Codex accounts are not imported: they are listed as skipped with the reason. Inputs: source (better-ccflare), optional path (default ~/.config/better-ccflare/better-ccflare.db). Returns the imported names and the skipped accounts; no key is ever returned. Needs settings:write and a trusted, project-unrestricted client. 409 not_supported unless settings.gateway.mode is internal; 400 when the database cannot be read.",
+  scope: "settings:write",
+  projectScoped: false,
+  input: z.strictObject({
+    source: z.literal("better-ccflare"),
+    path: z.string().min(1).max(1000).optional(),
+  }),
+  output: z.object({
+    imported: z.array(z.object({ name: z.string() })),
+    skipped: z.array(z.object({ name: z.string(), provider: z.string(), reason: z.string() })),
+  }),
+  rest: { method: "POST", path: "/accounts/import" },
+  mcp: { expose: true, name: "boof_import_accounts", annotations: IDEMPOTENT_WRITE },
+  summary: (r) => `${r.imported.length} imported, ${r.skipped.length} skipped`,
+  handler: async (ctx, input) => {
+    assertMayWriteSettings(ctx);
+    await internalOnly(ctx);
+    return ctx.services.withPool(async () =>
+      (await ctx.services.internalPool()).importFromCcflare(input.path),
+    );
+  },
+});
+
 export const accountOps = [
   accountsList,
   accountsAgentSdk,
@@ -274,4 +301,5 @@ export const accountOps = [
   accountsThresholds,
   accountsAdd,
   accountsRemove,
+  accountsImport,
 ];

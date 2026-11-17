@@ -2,6 +2,11 @@ import { join } from "node:path";
 import {
   AccountsStore,
   GatewayServer,
+  defaultCcflareDb,
+  importCcflare,
+  summariseCcflare,
+  CcflareImportError,
+  type CcflareImportResult,
   Pool,
   TokenStore,
   type AccountSummary as InternalAccountSummary,
@@ -113,6 +118,30 @@ export class InternalPoolBackend implements PoolBackend {
         400,
         "invalid_input",
       );
+    }
+  }
+
+  /** The better-ccflare database an import reads when no path is given. */
+  static defaultCcflareDb = (): string => defaultCcflareDb();
+
+  /** How many API-key accounts a better-ccflare database offers, and how many it leaves. Counts only. */
+  async previewCcflare(path?: string): Promise<{ importable: number; skipped: number }> {
+    return this.ccflare(() => summariseCcflare(path ?? defaultCcflareDb()));
+  }
+
+  /** One-time import of the API-key accounts of a better-ccflare database (read-only). No key is returned. */
+  async importFromCcflare(path?: string): Promise<CcflareImportResult> {
+    const pool = await this.pool();
+    return this.ccflare(() => importCcflare(path ?? defaultCcflareDb(), (a) => pool.add(a)));
+  }
+
+  private async ccflare<T>(fn: () => Promise<T>): Promise<T> {
+    try {
+      return await fn();
+    } catch (err) {
+      if (err instanceof CcflareImportError)
+        throw new PoolBackendError(err.message, 400, "invalid_input");
+      throw err;
     }
   }
 

@@ -88,6 +88,7 @@ describe("UI coverage of the operations", () => {
         "epics.get",
         "settings.health",
         "settings.models",
+        "accounts.import",
       ]
     `);
   });

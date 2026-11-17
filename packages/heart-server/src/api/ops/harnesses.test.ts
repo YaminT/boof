@@ -164,7 +164,8 @@ describe("agent readiness", () => {
     expect(out.gateway.status).toBe("absent");
     expect(out.checks.find((c: any) => c.id === "gateway")).toMatchObject({
       status: "fail",
-      message: "Not configured.",
+      label: "Account pool",
+      message: "No account pool; agents use their own sign-in.",
       fixPage: "gateway",
     });
   });

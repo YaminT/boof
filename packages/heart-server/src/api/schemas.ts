@@ -307,6 +307,9 @@ export const DoctorCheckSchema = z.object({
   fixPage: FixPageSchema.optional().meta({
     description: "The Settings section where this is fixed.",
   }),
+  note: z.string().optional().meta({
+    description: "A one-line rule that applies whatever the result (the account pool terms note).",
+  }),
 });
 
 export const HarnessInstallSchema = z.object({

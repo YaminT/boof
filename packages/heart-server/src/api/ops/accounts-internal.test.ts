@@ -1,3 +1,4 @@
+import { DatabaseSync } from "node:sqlite";
 import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -139,5 +140,48 @@ describe("internal pool operations", () => {
   it("absent settings: list says not configured and writes nothing", async () => {
     expect(await run("accounts.list", admin)).toEqual({ configured: false, accounts: [] });
     expect((await run("accounts.health", admin)).configured).toBe(false);
+  });
+
+  describe("accounts.import", () => {
+    const makeDb = (path: string) => {
+      const d = new DatabaseSync(path);
+      d.exec(
+        "CREATE TABLE accounts (id TEXT, name TEXT, provider TEXT, api_key TEXT, priority INT)",
+      );
+      const ins = d.prepare("INSERT INTO accounts VALUES (?, ?, ?, ?, ?)");
+      ins.run("1", "sub", "anthropic", null, 0);
+      ins.run("2", "console", "claude-console-api", KEY, 1);
+      d.close();
+    };
+
+    it("imports API-key accounts, skips subscriptions, never returns a key", async () => {
+      await setMode("internal");
+      const path = join(root, "ccflare.db");
+      makeDb(path);
+      const out = await run("accounts.import", admin, { source: "better-ccflare", path });
+      expect(out.imported).toEqual([{ name: "console" }]);
+      expect(out.skipped).toHaveLength(1);
+      expect(out.skipped[0]).toMatchObject({ name: "sub", provider: "anthropic" });
+      expect(JSON.stringify(out)).not.toContain(KEY);
+      expect((await run("accounts.list", admin)).accounts).toHaveLength(1);
+      // The same key a second time is skipped, not duplicated.
+      const again = await run("accounts.import", admin, { source: "better-ccflare", path });
+      expect(again.imported).toEqual([]);
+      expect(again.skipped.map((s: any) => s.reason)).toContain("that key is already in the pool");
+    });
+
+    it("answers 400 for an unreadable database, 409 outside internal mode, 403 without trust", async () => {
+      await setMode("internal");
+      await expect(
+        run("accounts.import", admin, { source: "better-ccflare", path: join(root, "none.db") }),
+      ).rejects.toMatchObject({ status: 400 });
+      await expect(
+        run("accounts.import", client(["settings:write"], "review"), { source: "better-ccflare" }),
+      ).rejects.toBeInstanceOf(OpError);
+      await setMode("better-ccflare");
+      await expect(
+        run("accounts.import", admin, { source: "better-ccflare" }),
+      ).rejects.toMatchObject({ status: 409, code: "not_supported" });
+    });
   });
 });

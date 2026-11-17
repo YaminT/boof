@@ -149,6 +149,9 @@ export const OP_COVERAGE: Record<string, { where: string } | { none: string }> =
   "accounts.thresholds": { where: "accountThresholds — AccountsPage (usage pause thresholds)" },
   "accounts.add": { where: "addAccount — AccountsPage (internal pool: add an API-key account)" },
   "accounts.remove": { where: "removeAccount — AccountsPage (internal pool: remove an account)" },
+  "accounts.import": {
+    none: "the import is offered by `boof doctor --fix`; the Accounts page add form comes later",
+  },
   "webhooks.list": { where: "listWebhooks \u2014 Webhooks (the webhook list)" },
   "webhooks.create": {
     where: "createWebhook \u2014 Webhooks (new webhook; the secret is shown once)",

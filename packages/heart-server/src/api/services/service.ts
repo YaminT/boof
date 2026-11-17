@@ -19,7 +19,13 @@ import {
 } from "@boof/owlish";
 import { appendFile, readFile, realpath, rm, stat } from "node:fs/promises";
 import { homedir } from "node:os";
-import { gitCheck, writableDirCheck, type DoctorCheck, type ToolReadiness } from "./doctor.js";
+import {
+  gitCheck,
+  poolCheck,
+  writableDirCheck,
+  type DoctorCheck,
+  type ToolReadiness,
+} from "./doctor.js";
 import { isAbsolute, join, resolve } from "node:path";
 import {
   agentStatus,
@@ -2052,31 +2058,12 @@ export class TaskService {
           ...(firstBlocked?.fixHint ? { fixHint: firstBlocked.fixHint } : {}),
           fixPage: firstBlocked?.fixPage ?? "agents",
         };
-    const gateway: DoctorCheck = !settings.owlish
-      ? {
-          id: "gateway",
-          label: "better-ccflare gateway",
-          status: anyReady ? "warn" : "fail",
-          message: "Not configured.",
-          fixHint: "Configure the better-ccflare gateway in Settings.",
-          fixPage: "gateway",
-        }
-      : pool.status === "ok" || pool.status === "degraded"
-        ? {
-            id: "gateway",
-            label: "better-ccflare gateway",
-            status: pool.status === "ok" ? "pass" : "warn",
-            message: gatewayMessage(pool.status, pool.reason),
-            ...(pool.status === "ok" ? {} : { fixPage: "gateway" as const }),
-          }
-        : {
-            id: "gateway",
-            label: "better-ccflare gateway",
-            status: "fail",
-            message: gatewayMessage(pool.status, pool.reason),
-            fixHint: "Check the gateway address and that it is running.",
-            fixPage: "gateway",
-          };
+    const gateway = poolCheck({
+      mode: resolveGatewayMode(settings),
+      anyReady,
+      pool,
+      legacyMessage: gatewayMessage,
+    });
     const sb = sandboxStatusFor(settings.runner.sandbox, process.platform);
     const sandbox: DoctorCheck = {
       id: "sandbox",
