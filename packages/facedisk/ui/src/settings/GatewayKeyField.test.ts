@@ -35,4 +35,10 @@ describe("GatewayKeyField (Accounts tab agent key)", () => {
     expect(html).toContain('placeholder="Key is set; enter to replace"');
     expect(html).toContain('value=""');
   });
+  it("lets a required key replace the optional placeholder, but not the set-key one", () => {
+    expect(render({ placeholder: "sk-ant-api..." })).toContain('placeholder="sk-ant-api..."');
+    expect(render({ placeholder: "sk-ant-api...", source: "file" })).toContain(
+      'placeholder="Key is set; enter to replace"',
+    );
+  });
 });

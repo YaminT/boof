@@ -19,6 +19,7 @@ import type {
   TaskDiff,
   ToolModelDetails,
   Whoami,
+  AccountSummary,
   AccountsHealth,
   AccountsList,
   AgentSdkEligibility,
@@ -404,6 +405,14 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ priority }),
     }),
+  /** Internal pool only. The key is write-only: it is never in any response. */
+  addAccount: (input: { name: string; apiKey: string; priority?: number }) =>
+    http<{ account: AccountSummary }>(`${V1}/accounts`, {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
+  removeAccount: (accountId: string) =>
+    http<{ ok: true }>(`${V1}/accounts/${encodeURIComponent(accountId)}`, { method: "DELETE" }),
   accountThresholds: (accountId: string, thresholds: Record<string, number | null>) =>
     http<{ ok: true }>(`${V1}/accounts/${encodeURIComponent(accountId)}/thresholds`, {
       method: "POST",

@@ -15,6 +15,7 @@ export function GatewayKeyField({
   onChange,
   disabled,
   hint,
+  placeholder,
 }: {
   label: string;
   /** "Client key" or "Agent key": used in the status line and the placeholder. */
@@ -24,6 +25,8 @@ export function GatewayKeyField({
   onChange: (value: string) => void;
   disabled: boolean;
   hint?: string;
+  /** Overrides the default placeholder when no key is set (a required key is not "optional"). */
+  placeholder?: string;
 }) {
   return (
     <div className="flex min-w-0 flex-col gap-1">
@@ -33,7 +36,11 @@ export function GatewayKeyField({
           type="password"
           autoComplete="new-password"
           className={inputClass}
-          placeholder={source ? "Key is set; enter to replace" : `Optional ${noun.toLowerCase()}`}
+          placeholder={
+            source
+              ? "Key is set; enter to replace"
+              : (placeholder ?? `Optional ${noun.toLowerCase()}`)
+          }
           value={value}
           onChange={(e) => onChange(e.target.value)}
           disabled={disabled}
