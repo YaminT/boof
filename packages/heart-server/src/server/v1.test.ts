@@ -316,7 +316,7 @@ describe("v1 conventions", () => {
     expect(BOOF_VERSION).toBe(pkg.version);
   });
 
-  it("is release 0.7.0 in every package and in BOOF_VERSION", async () => {
+  it("is release 0.8.0 in every package and in BOOF_VERSION", async () => {
     const root = join(import.meta.dirname, "..", "..", "..", "..");
     const files = ["package.json", "bin/package.json"];
     for (const p of ["desktop", "facedisk", "heart", "heart-server", "owlish", "runner"]) {
@@ -324,8 +324,8 @@ describe("v1 conventions", () => {
     }
     for (const f of files) {
       const pkg = JSON.parse(await readFile(join(root, f), "utf8"));
-      expect([f, pkg.version]).toEqual([f, "0.7.0"]);
+      expect([f, pkg.version]).toEqual([f, "0.8.0"]);
     }
-    expect(BOOF_VERSION).toBe("0.7.0");
+    expect(BOOF_VERSION).toBe("0.8.0");
   });
 });
