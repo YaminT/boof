@@ -7,6 +7,10 @@ import { CREDIT_RECHECK_MS } from "./limits.js";
 import { Pool, type Strategy } from "./pool.js";
 
 const key = (n: string) => `sk-ant-api03-${n.padEnd(20, "x")}`;
+const track = (pool: Pool): Pool => {
+  opened.push(pool);
+  return pool;
+};
 let root: string;
 let store: AccountsStore;
 let now: number;
@@ -18,11 +22,16 @@ beforeEach(async () => {
   store = new AccountsStore(join(root, "gateway"));
   now = Date.parse("2026-01-01T00:00:00Z");
 });
-afterEach(() => rm(root, { recursive: true, force: true }));
+const opened: Pool[] = [];
+afterEach(async () => {
+  // Writes queued by pick/report run behind the call; let them finish before removing the dir.
+  await Promise.all(opened.splice(0).map((p) => p.flush()));
+  await rm(root, { recursive: true, force: true });
+});
 
 async function open(strategy?: Strategy, ids = ["a", "b", "c"]) {
   let i = 0;
-  return Pool.open({ store, now: clock, strategy, newId: () => ids[i++] ?? `id${i}` });
+  return track(await Pool.open({ store, now: clock, strategy, newId: () => ids[i++] ?? `id${i}` }));
 }
 
 /** Three accounts a(0) b(1) c(2); each add advances the clock so createdAt orders them. */
@@ -215,7 +224,7 @@ describe("persistence and admin", () => {
     pool.report("a", { kind: "rate_limited", until: now + 60_000 }, 429);
     await pool.pause("c");
     await pool.flush();
-    const again = await Pool.open({ store, now: clock });
+    const again = track(await Pool.open({ store, now: clock }));
     expect(again.accountList().map((a) => [a.id, a.paused, a.rateLimitStatus])).toEqual([
       ["a", false, "rate_limited"],
       ["b", false, "allowed"],
@@ -241,7 +250,7 @@ describe("persistence and admin", () => {
     expect(await pool.remove(first.id)).toBe(true);
     expect(await pool.remove(first.id)).toBe(false);
     expect(pool.accountList().map((a) => a.id)).toEqual([second.id]);
-    expect((await Pool.open({ store, now: clock })).accountList()).toHaveLength(1);
+    expect(track(await Pool.open({ store, now: clock })).accountList()).toHaveLength(1);
   });
 
   it("resume clears waits and unknown ids are ignored", async () => {
