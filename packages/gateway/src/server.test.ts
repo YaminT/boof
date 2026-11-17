@@ -491,6 +491,23 @@ describe("Limits", () => {
     sock.destroy();
   });
 
+  it("keeps counting a fully uploaded body while the upstream has not answered", async () => {
+    await boot({ maxInflightBodyBytes: 1000, maxBodyBytes: 600, maxRunInflightBodyBytes: 300 });
+    let release: (() => void) | undefined;
+    handler = (_q, res) => {
+      release = () => res.end("{}");
+    };
+    const first = call({ body: "x".repeat(250) }).catch(() => undefined);
+    await sleep(150);
+    // the first body is fully uploaded but still held in memory: it must still count
+    const second = await call({ body: "x".repeat(250) });
+    expect(second.status).toBe(429);
+    release?.();
+    await first;
+    await sleep(100);
+    expect((gw as unknown as { inflight: number }).inflight).toBe(0);
+  });
+
   it("ends a stream when its token is revoked mid-response", async () => {
     await boot();
     handler = (_q, res) => {

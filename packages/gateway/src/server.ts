@@ -278,7 +278,6 @@ export class GatewayServer {
       return true;
     };
     res.once("close", release);
-    req.once("close", release);
     req.once("error", release);
     req.socket.once("close", release);
     try {

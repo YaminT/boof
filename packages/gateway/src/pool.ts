@@ -468,6 +468,7 @@ export class Pool {
     }
     clearTimeout(this.timer);
     this.timer = undefined;
+    this.refresh(); // pick up a pause/resume written by another process before persisting
     const snapshot = new Map([...this.state].map(([k, v]) => [k, { ...v }] as const));
     this.writing = this.writing
       .then(() => this.store.saveState(snapshot))
