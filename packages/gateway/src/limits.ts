@@ -24,7 +24,18 @@ export const MAX_RESET_MS = 24 * 60 * 60_000;
 export const CREDIT_RECHECK_MS = 60 * 60_000;
 
 /** Lower-case substrings of an error message that mean "out of credit or spend limit". */
-export const CREDIT_MARKERS = ["credit balance is too low", "spend limit"];
+export const CREDIT_MARKERS = [
+  "credit balance is too low",
+  "spend limit",
+  // 400 invalid_request_error when a limit the user set is reached ("You have reached your
+  // specified API usage limits" / "...specified workspace API usage limits").
+  "reached your specified",
+  // 429 tier spend cap: "You have reached your API usage limits: ..."
+  "reached your api usage limits",
+];
+/** `error.details.error_code` of the 429 tier spend cap (no retry-after; lasts until the month ends). */
+export const SPEND_CAP_ERROR_CODE = "enforced_spend_limit_reached";
+// Docs: https://platform.claude.com/docs/en/api/errors and /docs/en/api/rate-limits
 const CREDIT_ERROR_TYPES = ["billing_error"];
 const RESET_HEADERS = [
   "anthropic-ratelimit-requests-reset",
@@ -85,15 +96,19 @@ export function resetTime(headers: HeaderBag | undefined, now: number): number {
   );
 }
 
-function errorInfo(body: string | undefined): { type: string; message: string } {
+function errorInfo(body: string | undefined): { type: string; message: string; code: string } {
   const text = (body ?? "").slice(0, 8192);
   try {
-    const json = JSON.parse(text) as { error?: { type?: unknown; message?: unknown } };
+    const json = JSON.parse(text) as {
+      error?: { type?: unknown; message?: unknown; details?: { error_code?: unknown } };
+    };
     const type = typeof json.error?.type === "string" ? json.error.type : "";
     const message = typeof json.error?.message === "string" ? json.error.message : "";
-    return { type, message };
+    const code =
+      typeof json.error?.details?.error_code === "string" ? json.error.details.error_code : "";
+    return { type, message, code };
   } catch {
-    return { type: "", message: text };
+    return { type: "", message: text, code: "" };
   }
 }
 
@@ -115,6 +130,7 @@ export function classify(answer: UpstreamAnswer, now: number): Outcome {
     status === 402 ||
     CREDIT_ERROR_TYPES.includes(info.type) ||
     CREDIT_MARKERS.some((m) => lower.includes(m));
+  if (status === 429 && info.code === SPEND_CAP_ERROR_CODE) return { kind: "credit" };
   if (credit && status !== 429 && status < 500) return { kind: "credit" };
   if (status === 429) return { kind: "rate_limited", until: resetTime(answer.headers, now) };
   if (status === 529 || status >= 500 || info.type === "overloaded_error") {

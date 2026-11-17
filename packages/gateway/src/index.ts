@@ -3,3 +3,5 @@ export * from "./limits.js";
 export * from "./pool.js";
 export * from "./redact.js";
 export * from "./tokens.js";
+export * from "./server.js";
+export * from "./usage-tap.js";

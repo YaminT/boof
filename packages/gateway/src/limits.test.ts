@@ -103,3 +103,41 @@ describe("parseRetryAfter", () => {
     expect(parseRetryAfter("-5", NOW)).toBeUndefined();
   });
 });
+
+describe("spend limits (current Anthropic docs)", () => {
+  const body = (type: string, message: string, details?: object) =>
+    JSON.stringify({ type: "error", error: { type, message, details } });
+
+  it("tier spend cap: 429 with enforced_spend_limit_reached is credit, not a rate limit", () => {
+    const b = body("rate_limit_error", "You have reached your API usage limits: ...", {
+      error_code: "enforced_spend_limit_reached",
+    });
+    expect(classify({ status: 429, body: b }, NOW)).toEqual({ kind: "credit" });
+  });
+
+  it("a ramp-limit 429 stays a rate limit", () => {
+    const b = body("rate_limit_error", "ramp", { error_code: "ramp_limit_exceeded" });
+    expect(classify({ status: 429, headers: { "retry-after": "5" }, body: b }, NOW).kind).toBe(
+      "rate_limited",
+    );
+  });
+
+  it("self-set spend limit: 400 'reached your specified API usage limits' is credit", () => {
+    const b = body(
+      "invalid_request_error",
+      "You have reached your specified API usage limits. You will regain access on 2026-09-01.",
+    );
+    expect(classify({ status: 400, body: b }, NOW)).toEqual({ kind: "credit" });
+    const w = body(
+      "invalid_request_error",
+      "You have reached your specified workspace API usage limits.",
+    );
+    expect(classify({ status: 400, body: w }, NOW)).toEqual({ kind: "credit" });
+  });
+
+  it("402 billing_error is credit", () => {
+    expect(classify({ status: 402, body: body("billing_error", "x") }, NOW)).toEqual({
+      kind: "credit",
+    });
+  });
+});
