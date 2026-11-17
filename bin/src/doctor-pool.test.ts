@@ -3,7 +3,6 @@ import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { stopSharedInternalBackend } from "@boof/owlish";
 import { TaskService } from "@boof/heart-server";
 import { ToolRegistry, type Tool } from "@boof/runner";
 import { doctorCommand, type DoctorIo } from "./doctor-cli.js";
@@ -79,7 +78,7 @@ beforeEach(async () => {
 });
 afterEach(async () => {
   vi.restoreAllMocks();
-  await stopSharedInternalBackend(data);
+  await (await svc().internalPool()).stop();
   for (const [k, v] of Object.entries(saved)) {
     if (v === undefined) delete process.env[k];
     else process.env[k] = v;
