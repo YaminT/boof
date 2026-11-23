@@ -24,6 +24,10 @@
       "types": "./src/task-types.ts",
       "default": "./src/task-types.ts"
     },
+    "./agent-count": {
+      "types": "./src/agent-count.ts",
+      "default": "./src/agent-count.ts"
+    },
     "./instance-proof": {
       "types": "./src/instance-proof.ts",
       "default": "./src/instance-proof.ts"

@@ -1,3 +1,4 @@
+import { agentsReadyText } from "@boof/heart/agent-count";
 import { spawn } from "node:child_process";
 import { chmod, mkdir, realpath, stat } from "node:fs/promises";
 import { createInterface } from "node:readline";
@@ -102,10 +103,9 @@ function needsAttention(status: HarnessStatusResult): boolean {
 }
 
 function compactSummary(status: HarnessStatusResult): string {
-  const n = Object.values(status.tools).filter((t) => t.ready).length;
   const gw = status.checks.find((c) => c.id === "gateway");
   const gateway = !gw || gw.status === "pass" ? "gateway OK" : "gateway not configured (optional)";
-  return `Doctor: OK · ${n} agent${n === 1 ? "" : "s"} ready · ${gateway}`;
+  return `Doctor: OK · ${agentsReadyText(status.tools)} · ${gateway}`;
 }
 
 /** The table, in the order and words of the web Doctor. */
