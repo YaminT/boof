@@ -38,8 +38,14 @@ jobs:
         run: node .github/scripts/vitest-slowest.mjs vitest-report.json
 
   windows-tests:
-    name: Windows unit suite
+    # Windows spawns git and child processes several times slower than Linux, so the suite is split
+    # across three runners: one run took about 30 minutes.
+    name: Windows unit suite (${{ matrix.shard }}/3)
     runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -61,7 +67,7 @@ jobs:
         run: npm run typecheck
 
       - name: Test
-        run: npx vitest run --reporter=default --reporter=json --outputFile.json=vitest-report.json
+        run: npx vitest run --shard=${{ matrix.shard }}/3 --reporter=default --reporter=json --outputFile.json=vitest-report.json
 
       - name: Slowest tests
         if: always()
