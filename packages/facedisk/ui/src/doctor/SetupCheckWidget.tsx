@@ -2,8 +2,15 @@ import { useState } from "react";
 import { Button } from "../ui/button.js";
 import type { HarnessesState } from "../useHarnesses.js";
 import { compactSummary, needsAttention } from "../lib/doctor.js";
+import { useConnection } from "../lib/useConnection.js";
 import { formatRoute } from "../lib/route.js";
 import { CheckRows, LINK } from "./CheckRows.js";
+
+const CONNECTION_WORD = {
+  reconnecting: "Checking…",
+  offline: "Offline",
+  "signed-out": "Sign in needed",
+} as const;
 
 /**
  * The Doctor widget on the first page: always shown, never blocking. One line when everything
@@ -18,6 +25,7 @@ export function SetupCheckWidget({
   pid: string | null;
 }) {
   const { status, loading, failed, denied, refresh } = harnesses;
+  const { state: conn } = useConnection();
   const [chosen, setChosen] = useState<boolean | null>(null);
   const attention = status ? needsAttention(status) : false;
   const open = chosen ?? attention;
@@ -32,7 +40,7 @@ export function SetupCheckWidget({
         <h2 className="m-0 text-[length:var(--text-body)] font-semibold">Doctor</h2>
         <span
           data-testid="setup-check-summary"
-          className={`min-w-0 flex-1 ${attention ? "text-attention" : "text-ink-muted"}`}
+          className={`min-w-[8rem] flex-1 ${attention ? "text-attention" : "text-ink-muted"}`}
         >
           {denied
             ? "This key cannot read the Doctor."
@@ -40,11 +48,13 @@ export function SetupCheckWidget({
               ? attention
                 ? "Needs attention"
                 : compactSummary(status)
-              : failed
-                ? "Could not run the checks."
-                : loading
-                  ? "Checking this computer…"
-                  : ""}
+              : failed && conn !== "live"
+                ? CONNECTION_WORD[conn]
+                : failed
+                  ? "Could not run the checks."
+                  : loading
+                    ? "Checking this computer…"
+                    : ""}
         </span>
         {status && (
           <Button variant="outline" size="sm" aria-expanded={open} onClick={() => setChosen(!open)}>

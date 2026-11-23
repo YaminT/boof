@@ -15,6 +15,7 @@ const { useRunningStep } = await import("./lib/useRunningStep.js");
 const { useHeldScopes } = await import("./lib/useHeldScopes.js");
 const { useHarnesses } = await import("./useHarnesses.js");
 const { getUpdateNotice } = await import("./api.js");
+const { getConnection, resetConnection } = await import("./lib/connection.js");
 
 class MemoryStorage {
   private m = new Map<string, string>();
@@ -126,6 +127,7 @@ beforeEach(() => {
   resetInstanceProof();
   invalidateCache();
   (globalThis as { __holder?: { id: string | null } }).__holder = { id: null };
+  resetConnection();
   setToken("boof_saved_key");
   sessionStorage.setItem("boofInstance", INSTANCE);
 });
@@ -166,6 +168,18 @@ describe("an idle open tab", () => {
     ])
       expect(c(k), k).toBeLessThanOrEqual(10);
     expect(c("api/v1/events")).toBeLessThanOrEqual(2);
+    // The connection indicator adds nothing: live, it asks no /healthz of its own.
+    expect(getConnection().state).toBe("live");
+  });
+
+  it("with the stream down, the connection state asks /healthz about once a minute", async () => {
+    const { counts } = rig({ sseUp: false });
+    const app = mountMainHooks();
+    await advance(5 * MIN);
+    // the instance proof (one per minute) and the connection probe (cached 60 s) share the budget
+    expect(counts.get("healthz")).toBeLessThanOrEqual(12);
+    expect(getConnection().state).toBe("reconnecting");
+    app.unmount();
   });
 
   it("makes no duplicate calls when the app mounts", async () => {

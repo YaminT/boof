@@ -56,6 +56,7 @@ export class SseParser {
 export async function readSse(
   body: ReadableStream<Uint8Array>,
   onMessage: (m: SseMessage) => void,
+  onChunk?: () => void,
 ): Promise<void> {
   const reader = body.getReader();
   const decoder = new TextDecoder();
@@ -64,6 +65,7 @@ export async function readSse(
     for (;;) {
       const { done, value } = await reader.read();
       if (done) break;
+      onChunk?.();
       for (const m of parser.push(decoder.decode(value, { stream: true }))) onMessage(m);
     }
   } finally {
@@ -93,9 +95,13 @@ export interface EventStreamOptions {
   /** Reconnect delay for the nth consecutive failure (default: 1s doubling to 30s). */
   backoffMs?: (attempt: number) => number;
   sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
+  /** Drop and reconnect when no byte (data or keep-alive comment) arrives for this long. */
+  idleTimeoutMs?: number;
 }
 
-const defaultBackoff = (attempt: number) => Math.min(30_000, 1000 * 2 ** Math.min(attempt, 5));
+/** 1 s doubling to 30 s, with up to 25 % jitter so tabs do not reconnect in step. */
+export const defaultBackoff = (attempt: number, random: () => number = Math.random) =>
+  Math.round(Math.min(30_000, 1000 * 2 ** Math.min(attempt, 5)) * (0.75 + random() * 0.5));
 
 const defaultSleep = (ms: number, signal: AbortSignal) =>
   new Promise<void>((resolve) => {
@@ -136,46 +142,69 @@ export function connectEventStream(opts: EventStreamOptions): () => void {
             delete headers.authorization;
           }
         }
-        const res = await doFetch(opts.url, {
-          credentials: "same-origin",
-          headers: { accept: "text/event-stream", ...headers },
-          signal: ctrl.signal,
-        });
-        if (res.ok && headers.authorization) noteInstanceHeader(res.headers.get("X-Boof-Instance"));
-        if (res.status === 401) {
-          // A "browser_session_required" 401 means this browser has no session: pause until the
-          // user signs in (or stores a key), instead of reconnecting into more 401s.
-          const reason = unauthorizedReason(await res.json().catch(() => null));
-          const verdict = opts.onUnauthorized?.(
-            headers.authorization?.replace(/^Bearer\s+/i, ""),
-            reason,
-          );
-          // The key it carried is no longer the current one: just reconnect with the current key.
-          if (verdict === "stale") {
+        // One controller per connection, so the idle watchdog can end it without ending the loop.
+        const conn = new AbortController();
+        const forward = () => conn.abort();
+        ctrl.signal.addEventListener("abort", forward, { once: true });
+        let last = Date.now();
+        const watchdog = opts.idleTimeoutMs
+          ? setInterval(
+              () => {
+                if (Date.now() - last > opts.idleTimeoutMs!) conn.abort();
+              },
+              Math.min(5_000, opts.idleTimeoutMs),
+            )
+          : undefined;
+        try {
+          const res = await doFetch(opts.url, {
+            credentials: "same-origin",
+            headers: { accept: "text/event-stream", ...headers },
+            signal: conn.signal,
+          });
+          if (res.ok && headers.authorization)
+            noteInstanceHeader(res.headers.get("X-Boof-Instance"));
+          if (res.status === 401) {
+            // A "browser_session_required" 401 means this browser has no session: pause until the
+            // user signs in (or stores a key), instead of reconnecting into more 401s.
+            const reason = unauthorizedReason(await res.json().catch(() => null));
+            const verdict = opts.onUnauthorized?.(
+              headers.authorization?.replace(/^Bearer\s+/i, ""),
+              reason,
+            );
+            // The key it carried is no longer the current one: just reconnect with the current key.
+            if (verdict === "stale") {
+              attempt = 0;
+              continue;
+            }
+            // Without a way to wait for a new key, stop; otherwise pause until one is stored.
+            opts.onClose?.();
+            if (!opts.waitForCredentials) return;
+            await opts.waitForCredentials(ctrl.signal);
+            if (ctrl.signal.aborted) return;
             attempt = 0;
             continue;
           }
-          // Without a way to wait for a new key, stop; otherwise pause until one is stored.
-          opts.onClose?.();
-          if (!opts.waitForCredentials) return;
-          await opts.waitForCredentials(ctrl.signal);
-          if (ctrl.signal.aborted) return;
-          attempt = 0;
-          continue;
-        }
-        if (res.status === 503) {
-          // The browser-session folder is unsafe: retrying cannot help until it is fixed, so the
-          // stream stays paused (no reconnects) and the message is shown once.
-          const storage = storageUnavailableMessage(res.status, await res.json().catch(() => null));
-          if (storage !== undefined) {
-            reportSignInStorageError(storage);
-            return;
+          if (res.status === 503) {
+            // The browser-session folder is unsafe: retrying cannot help until it is fixed, so the
+            // stream stays paused (no reconnects) and the message is shown once.
+            const storage = storageUnavailableMessage(
+              res.status,
+              await res.json().catch(() => null),
+            );
+            if (storage !== undefined) {
+              reportSignInStorageError(storage);
+              return;
+            }
           }
+          if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
+          attempt = 0;
+          opts.onOpen?.();
+          last = Date.now();
+          await readSse(res.body, opts.onMessage, () => (last = Date.now()));
+        } finally {
+          clearInterval(watchdog);
+          ctrl.signal.removeEventListener("abort", forward);
         }
-        if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
-        attempt = 0;
-        opts.onOpen?.();
-        await readSse(res.body, opts.onMessage);
       } catch {
         if (ctrl.signal.aborted) return;
       }
