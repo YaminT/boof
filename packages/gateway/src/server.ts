@@ -81,6 +81,8 @@ export interface GatewayServerOptions {
   requestTimeoutMs?: number;
   connectTimeoutMs?: number;
   headersTimeoutMs?: number;
+  /** Total time one client request may spend on 401 re-checks (default 15 s). */
+  recheckBudgetMs?: number;
   idleTimeoutMs?: number;
   log?: (event: GatewayLogEvent) => void;
 }
@@ -170,6 +172,7 @@ export class GatewayServer {
   private readonly requestMs: number;
   private readonly connectMs: number;
   private readonly headersMs: number;
+  private readonly recheckBudgetMs: number;
   private readonly idleMs: number;
   private readonly log: (e: GatewayLogEvent) => void;
   private server: http.Server | null = null;
@@ -194,6 +197,7 @@ export class GatewayServer {
     this.requestMs = opts.requestTimeoutMs ?? 60_000;
     this.connectMs = opts.connectTimeoutMs ?? 10_000;
     this.headersMs = opts.headersTimeoutMs ?? 10 * 60_000;
+    this.recheckBudgetMs = opts.recheckBudgetMs ?? 15_000;
     this.idleMs = opts.idleTimeoutMs ?? 5 * 60_000;
     this.log = opts.log ?? (() => {});
   }
@@ -355,6 +359,7 @@ export class GatewayServer {
     let last: Buffered | undefined;
     let networkFailed = false;
     let marks = 0;
+    let recheckLeft = this.recheckBudgetMs;
 
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
       if (res.destroyed) return;
@@ -388,8 +393,11 @@ export class GatewayServer {
       // R1: the 401 may come from the shape of this client's request, not from the key. Pause the
       // account only if a request the client cannot shape is refused too; otherwise the request was
       // at fault and the account stays in service.
-      if (outcome.kind === "auth" && !(await this.keyRejected(account.apiKey))) {
-        outcome = { kind: "other" };
+      if (outcome.kind === "auth") {
+        const t0 = this.now();
+        const rejected = await this.keyRejected(account.apiKey, recheckLeft);
+        recheckLeft = Math.max(0, recheckLeft - (this.now() - t0));
+        if (!rejected) outcome = { kind: "other" };
       }
       // One request marks at most two accounts for credit/auth, but keeps trying the others.
       const marking = outcome.kind === "credit" || outcome.kind === "auth";
@@ -535,7 +543,9 @@ export class GatewayServer {
   }
 
   /** True when `GET /v1/models` with only the key and the fixed version header answers 401. */
-  private keyRejected(key: string): Promise<boolean> {
+  private keyRejected(key: string, budgetMs: number): Promise<boolean> {
+    // The client is waiting: a re-check that cannot finish within the budget cannot confirm.
+    if (budgetMs <= 0) return Promise.resolve(false);
     return new Promise((resolve) => {
       const lib = this.origin.protocol === "https:" ? https : http;
       const out = lib.request(
@@ -557,7 +567,10 @@ export class GatewayServer {
           resolve(up.statusCode === 401);
         },
       );
-      const t = setTimeout(() => out.destroy(new Error("recheck timeout")), this.headersMs);
+      const t = setTimeout(
+        () => out.destroy(new Error("recheck timeout")),
+        Math.min(this.headersMs, budgetMs),
+      );
       t.unref();
       out.on("close", () => clearTimeout(t));
       out.on("error", () => resolve(false)); // cannot confirm: leave the account in service
