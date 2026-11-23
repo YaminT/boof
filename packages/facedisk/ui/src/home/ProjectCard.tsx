@@ -1,6 +1,7 @@
 import { FolderOpenIcon, PauseIcon, PlayIcon, PlusIcon } from "lucide-react";
 import { cn } from "../lib/utils.js";
 import type { CardState, HomeCard } from "../lib/home.js";
+import { runningLabel } from "../lib/labels.js";
 import { formatRoute } from "../lib/route.js";
 
 const CHIP: Record<CardState, string> = {
@@ -35,6 +36,7 @@ export function ProjectCard({
   const { project } = card;
   const overview = formatRoute({ name: "overview", pid: project.id });
   const newPlan = formatRoute({ name: "wizard", pid: project.id });
+  const running = runningLabel(runningTitle, card.running[0]);
   const brief = project.brief?.trim() || project.workingDirectory;
   return (
     <li
@@ -92,9 +94,9 @@ export function ProjectCard({
       {card.running.length > 0 && (
         <p
           className="m-0 truncate text-[length:var(--text-row)] text-ink"
-          title={runningTitle ?? undefined}
+          title={running ?? undefined}
         >
-          Running now: {runningTitle ?? "…"}
+          Running now: {running ?? "…"}
           {card.running.length > 1 ? ` (+${card.running.length - 1})` : ""}
         </p>
       )}

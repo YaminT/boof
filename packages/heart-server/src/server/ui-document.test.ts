@@ -29,6 +29,8 @@ describe("isUiPath", () => {
     "/index.html",
     "/inbox",
     "/inbox/",
+    "/doctor",
+    "/doctor/",
     "/p/boof",
     "/p/boof/",
     "/p/boof/tasks/t1/changes",
