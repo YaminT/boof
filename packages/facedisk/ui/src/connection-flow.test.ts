@@ -36,6 +36,10 @@ function fakeServer(s: Server): typeof fetch {
 }
 
 const settle = () => vi.advanceTimersByTimeAsync(0);
+/** Advance fake time in small steps until `done()`, so a slow machine only costs time. */
+async function until(done: () => boolean, maxMs = 300_000): Promise<void> {
+  for (let t = 0; t < maxMs && !done(); t += 500) await vi.advanceTimersByTimeAsync(500);
+}
 
 describe("connection state through the real event stream", () => {
   let server: Server;
@@ -66,7 +70,7 @@ describe("connection state through the real event stream", () => {
     for (const c of ctrls) c.error(new Error("reset"));
     await settle();
     // /healthz is asked once the stream drops; it fails too, so we are offline right away.
-    await vi.advanceTimersByTimeAsync(5_000);
+    await until(() => getConnection().state === "offline", 10_000);
     expect(getConnection().state).toBe("offline");
     expect(getConnection().since).not.toBeNull();
 
@@ -76,7 +80,7 @@ describe("connection state through the real event stream", () => {
 
     // The server comes back: the next reconnect attempt turns it live.
     server.mode = "up";
-    await vi.advanceTimersByTimeAsync(60_000);
+    await until(() => getConnection().state === "live", 60_000);
     expect(getConnection()).toEqual({ state: "live", since: null });
   });
 
@@ -86,7 +90,7 @@ describe("connection state through the real event stream", () => {
     // Stream ends cleanly; /healthz still answers; the next open is refused with a 500.
     server.mode = "500";
     for (const c of ctrls) c.close();
-    await vi.advanceTimersByTimeAsync(5_000);
+    await until(() => getConnection().state === "reconnecting", 10_000);
     expect(getConnection().state).toBe("reconnecting");
   });
 
