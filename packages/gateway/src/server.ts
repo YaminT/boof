@@ -377,7 +377,7 @@ export class GatewayServer {
         return this.stream(up.res, res, account.id, run.runId, route.usage, started, supplied);
       }
       const buffered = await this.bufferError(up.res);
-      const outcome = classify(
+      let outcome = classify(
         {
           status,
           headers: up.res.headers as Record<string, string | string[] | undefined>,
@@ -385,6 +385,12 @@ export class GatewayServer {
         },
         this.now(),
       );
+      // R1: the 401 may come from the shape of this client's request, not from the key. Pause the
+      // account only if a request the client cannot shape is refused too; otherwise the request was
+      // at fault and the account stays in service.
+      if (outcome.kind === "auth" && !(await this.keyRejected(account.apiKey))) {
+        outcome = { kind: "other" };
+      }
       // One request marks at most two accounts for credit/auth, but keeps trying the others.
       const marking = outcome.kind === "credit" || outcome.kind === "auth";
       if (!marking || marks < MAX_MARKS_PER_REQUEST) {
@@ -525,6 +531,37 @@ export class GatewayServer {
       });
       out.on("error", (err) => done({ ok: false, error: err.message }));
       out.end(req.method === "POST" ? body : undefined);
+    });
+  }
+
+  /** True when `GET /v1/models` with only the key and the fixed version header answers 401. */
+  private keyRejected(key: string): Promise<boolean> {
+    return new Promise((resolve) => {
+      const lib = this.origin.protocol === "https:" ? https : http;
+      const out = lib.request(
+        {
+          agent: this.agent,
+          protocol: this.origin.protocol,
+          hostname: this.origin.hostname,
+          port: this.origin.port || undefined,
+          method: "GET",
+          path: "/v1/models",
+          headers: {
+            "x-api-key": key,
+            "anthropic-version": "2023-06-01",
+            "accept-encoding": "identity",
+          },
+        },
+        (up) => {
+          up.resume();
+          resolve(up.statusCode === 401);
+        },
+      );
+      const t = setTimeout(() => out.destroy(new Error("recheck timeout")), this.headersMs);
+      t.unref();
+      out.on("close", () => clearTimeout(t));
+      out.on("error", () => resolve(false)); // cannot confirm: leave the account in service
+      out.end();
     });
   }
 

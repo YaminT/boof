@@ -7,11 +7,13 @@ export const FINISHED_TTL_MS = 10 * 60_000;
 export interface FinishedMemory {
   /** Task ids seen running since the queue last emptied. */
   seen: readonly string[];
+  /** Done tasks across all projects when the work started (the overview's counts). */
+  baseDone: number;
   /** Set when the queue emptied after work ran. */
   finished: { count: number; at: number } | null;
 }
 
-export const EMPTY_FINISHED: FinishedMemory = { seen: [], finished: null };
+export const EMPTY_FINISHED: FinishedMemory = { seen: [], baseDone: 0, finished: null };
 
 export interface FinishedInput {
   kind: TopbarState["kind"];
@@ -20,8 +22,11 @@ export interface FinishedInput {
   /** Tasks waiting for the runner. */
   queued: number;
   now: number;
-  /** `pid/taskId` of tasks known to have ended failed or stopped: they are not counted as done. */
-  notDone?: readonly string[];
+  /**
+   * Tasks in the done folder across ALL projects, from the runner overview (the server's counts,
+   * not the selected project's task list). The finish counts how many were added since the work began.
+   */
+  doneTotal: number;
 }
 
 /**
@@ -32,12 +37,16 @@ export interface FinishedInput {
 export function stepFinished(mem: FinishedMemory, input: FinishedInput): FinishedMemory {
   if (input.running.length > 0) {
     const seen = [...new Set([...mem.seen, ...input.running])];
-    return seen.length === mem.seen.length && !mem.finished ? mem : { seen, finished: null };
+    if (seen.length === mem.seen.length && !mem.finished) return mem;
+    return {
+      seen,
+      baseDone: mem.seen.length === 0 ? input.doneTotal : mem.baseDone,
+      finished: null,
+    };
   }
   if (input.kind === "idle" && input.queued === 0 && mem.seen.length > 0) {
-    const bad = new Set(input.notDone ?? []);
-    const count = mem.seen.filter((id) => !bad.has(id)).length;
-    return { seen: [], finished: count > 0 ? { count, at: input.now } : null };
+    const count = Math.max(0, input.doneTotal - mem.baseDone);
+    return { seen: [], baseDone: 0, finished: count > 0 ? { count, at: input.now } : null };
   }
   if (mem.finished && input.now - mem.finished.at >= FINISHED_TTL_MS) {
     return { ...mem, finished: null };

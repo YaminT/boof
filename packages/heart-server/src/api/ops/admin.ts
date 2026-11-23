@@ -354,14 +354,28 @@ export const runnerStatus = defineOp({
   },
 });
 
+/** Start of the caller's day (ms): by its UTC offset when given, else the server's local midnight. */
+export function dayStart(nowMs: number, tzOffsetMinutes?: number): number {
+  if (tzOffsetMinutes === undefined) {
+    const d = new Date(nowMs);
+    d.setHours(0, 0, 0, 0);
+    return d.getTime();
+  }
+  const shifted = nowMs - tzOffsetMinutes * 60_000;
+  return shifted - (((shifted % 86_400_000) + 86_400_000) % 86_400_000) + tzOffsetMinutes * 60_000;
+}
+
 export const runnerOverview = defineOp({
   name: "runner.overview",
   title: "Runner and queue status",
   description:
-    "Returns whether the runner is enabled and, per project the client may access, whether it is paused, which tasks run now and how many tasks have each status. No input. No side effects.",
+    "Returns whether the runner is enabled and, per project the client may access, whether it is paused, which tasks run now and how many tasks have each status. Optional input: tzOffsetMinutes (your Date.getTimezoneOffset(), so doneToday counts from your midnight; the server's local midnight without it). No side effects.",
   scope: "settings:read",
   projectScoped: false,
-  input: z.strictObject({}),
+  input: z.strictObject({
+    /** The caller's `Date.getTimezoneOffset()` (UTC minus local, minutes): where "today" starts. */
+    tzOffsetMinutes: z.number().int().min(-1440).max(1440).optional(),
+  }),
   output: z.object({
     enabled: z.boolean(),
     concurrency: z.number().int(),
@@ -382,8 +396,10 @@ export const runnerOverview = defineOp({
           goalsDone: z.number().int(),
           goalsTotal: z.number().int(),
         }),
-        /** When the task folders last changed (ISO), and tasks finished since local midnight. */
+        /** When the task folders last changed (ISO), and tasks finished since the caller's midnight. */
         lastActivity: z.string().nullable(),
+        /** When a task last moved into `failed` (ISO). */
+        lastFailure: z.string().nullable(),
         doneToday: z.number().int(),
       }),
     ),
@@ -399,7 +415,7 @@ export const runnerOverview = defineOp({
     (r.projects
       .map((p) => `${p.id}${p.paused ? " (paused)" : ""}: ${p.running.length} running`)
       .join(", ") || "no projects"),
-  handler: async (ctx) => {
+  handler: async (ctx, input) => {
     const { runner } = await ctx.services.loadSettings();
     const allowed = (pid: string) => authorizeProject(ctx.principal, pid);
     // The project rows, budget, pool and agent auth each read their own files. Waiting for one
@@ -410,12 +426,11 @@ export const runnerOverview = defineOp({
         return Promise.all(
           listed.map(async (p) => {
             const svc = ctx.services.forProject(p.id);
-            const midnight = new Date();
-            midnight.setHours(0, 0, 0, 0);
+            const midnightMs = dayStart(Date.now(), input.tzOffsetMinutes);
             const [{ counts, running }, plans, activity] = await Promise.all([
               svc.statusSummary(),
               svc.plans.list().catch(() => []),
-              svc.activity(midnight.getTime()).catch(() => null),
+              svc.activity(midnightMs).catch(() => null),
             ]);
             const active = plans
               .filter((pl) => pl.status === "active")
@@ -433,6 +448,10 @@ export const runnerOverview = defineOp({
               lastActivity:
                 activity?.lastActivityMs != null
                   ? new Date(activity.lastActivityMs).toISOString()
+                  : null,
+              lastFailure:
+                activity?.lastFailedMs != null
+                  ? new Date(activity.lastFailedMs).toISOString()
                   : null,
               doneToday: activity?.doneSince ?? 0,
             };
