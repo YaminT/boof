@@ -182,8 +182,11 @@ describe("runner status gateway eligibility", () => {
       expect(status.agentAuth.find((row) => row.projectId === project.id)?.roles).toContain(
         "developer",
       );
-      // The pending override is one file. The finished task stays closed.
-      expect(takeTaskFileReads()).toBe(1);
+      // The pending override is one file. The task finished today is read once for its recorded
+      // completion time (then cached); no other finished task is read.
+      expect(takeTaskFileReads()).toBe(2);
+      await run("runner.overview", LOCAL_PRINCIPAL);
+      expect(takeTaskFileReads()).toBeLessThanOrEqual(1);
     } finally {
       fullScan.mockRestore();
     }
