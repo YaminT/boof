@@ -21,6 +21,8 @@ export const BROWSER_SAFE: Record<string, string> = {
   "@boof/heart/ids": "packages/heart/src/ids.ts",
   // HMAC of the per-start instance id. Web Crypto only, so the UI bundle does not pull Node.
   "@boof/heart/instance-proof": "packages/heart/src/instance-proof.ts",
+  // Pure counting of ready agents, shared by the web card, the CLI and the server.
+  "@boof/heart/agent-count": "packages/heart/src/agent-count.ts",
 };
 
 /** Known debts; empty since M1. */
