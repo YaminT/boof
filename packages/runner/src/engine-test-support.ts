@@ -47,26 +47,27 @@ export const commitIn = async (opts: RunOptions, file: string) => {
   await gitOut(["commit", "-m", "agent"], opts.cwd);
 };
 
-export const fm = (over: Partial<TaskFrontmatter> = {}): TaskFrontmatter => ({
-  id: "t1",
-  title: "T1",
-  status: "pending",
-  priority: 50,
-  skip: false,
-  labels: [],
-  command: null,
-  attachments: [],
-  questions: "none",
-  // mock tool for all roles
-  tools: {
-    planner: { tool: "mock", model: "mock-default" },
-    developer: { tool: "mock", model: "mock-default" },
-    reviewer: { tool: "mock", model: "mock-default" },
-  },
-  created: "2026-06-04T10:00:00.000Z",
-  updated: "2026-06-04T10:00:00.000Z",
-  ...over,
-});
+export const fm = (over: Partial<TaskFrontmatter> = {}) =>
+  ({
+    id: "t1",
+    title: "T1",
+    status: "pending",
+    priority: 50,
+    skip: false,
+    labels: [],
+    command: null,
+    attachments: [],
+    questions: "none",
+    // mock tool for all roles
+    tools: {
+      planner: { tool: "mock", model: "mock-default" },
+      developer: { tool: "mock", model: "mock-default" },
+      reviewer: { tool: "mock", model: "mock-default" },
+    },
+    created: "2026-06-04T10:00:00.000Z",
+    updated: "2026-06-04T10:00:00.000Z",
+    ...over,
+  }) as TaskFrontmatter;
 
 /** A second (and third) registered repository for the multi-project tests. */
 export interface Extra {
@@ -154,7 +155,7 @@ export function useEngineRig(assign: (rig: EngineRig) => void): void {
       ...defaultSettings(),
       runner: { enabled: true, concurrency: 1 },
       defaultProject: "default",
-    });
+    } as never);
     project = await new ProjectStore(dataRoot).create({ workingDirectory: workDir, id: "default" });
     projectDir = new ProjectStore(dataRoot).dir(project.id);
     store = new TaskStore(projectDir);
