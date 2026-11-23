@@ -5,7 +5,7 @@ import { clearToken, setToken, type UnauthorizedReason } from "../token.js";
 
 /**
  * Shown when the API answers 401: the server requires an API key. The key is
- * pasted (created with `boof-runner auth add`) and kept in sessionStorage only.
+ * pasted (created with `boof-runner auth add`) and kept in sessionStorage, or localStorage when the user opts in.
  */
 export function TokenGate({
   onSubmit,
@@ -15,6 +15,7 @@ export function TokenGate({
   reason?: UnauthorizedReason;
 }) {
   const [value, setValue] = useState("");
+  const [remember, setRemember] = useState(false);
   return (
     <div className="mx-auto my-[12vh] max-w-[440px] rounded-[10px] border border-line bg-surface p-6 shadow-md">
       <form
@@ -22,7 +23,7 @@ export function TokenGate({
         onSubmit={(e) => {
           e.preventDefault();
           if (!value.trim()) return;
-          setToken(value);
+          setToken(value, remember);
           onSubmit();
         }}
       >
@@ -40,7 +41,7 @@ export function TokenGate({
             <h2 className="m-0">API key required</h2>
             <p className="m-0 text-ink-muted">
               This Boof Runner server requires authentication. Paste an API key created with{" "}
-              <code>boof-runner auth add</code>. It is kept for this browser tab only.
+              <code>boof-runner auth add</code>. By default it is kept for this browser tab only.
             </p>
           </>
         )}
@@ -56,6 +57,18 @@ export function TokenGate({
             onChange={(e) => setValue(e.target.value)}
           />
         </label>
+        <label className="flex items-start gap-2 text-sm">
+          <input
+            type="checkbox"
+            className="mt-0.5"
+            checked={remember}
+            onChange={(e) => setRemember(e.target.checked)}
+          />
+          <span>
+            <span className="font-medium">Remember on this device</span>
+            <span className="block text-ink-muted">Anyone using this browser can use boof.</span>
+          </span>
+        </label>
         <div className="flex items-center gap-3">
           <Button
             type="button"
@@ -63,9 +76,10 @@ export function TokenGate({
             onClick={() => {
               clearToken();
               setValue("");
+              setRemember(false);
             }}
           >
-            Clear
+            Forget this key
           </Button>
           <Button type="submit" disabled={!value.trim()}>
             Continue
