@@ -353,3 +353,70 @@ body {
     transition: none;
   }
 }
+
+/* Doctor card: tones built from the topbar tints (their contrast is tested), see doctor-tokens.test.ts. */
+.dc {
+  --dc-bg: var(--surface);
+  --dc-border: var(--line);
+  --dc-fg: var(--ink);
+  --dc-sub: var(--ink-muted);
+  --dc-icon-bg: var(--tb-idle-bg);
+  --dc-icon-fg: var(--ink-muted);
+  background: var(--dc-bg);
+  border-color: var(--dc-border);
+  color: var(--dc-fg);
+}
+.dc[data-tone="ok"] {
+  --dc-icon-bg: var(--tb-working-bg);
+  --dc-icon-fg: var(--tb-working-fg);
+}
+.dc[data-tone="warn"] {
+  --dc-bg: var(--tb-paused-bg);
+  --dc-border: var(--tb-paused-border);
+  --dc-fg: var(--tb-paused-fg);
+  --dc-sub: var(--tb-paused-fg);
+  --dc-icon-bg: var(--surface);
+  --dc-icon-fg: var(--tb-paused-fg);
+}
+.dc[data-tone="fail"] {
+  --dc-bg: var(--tb-blocked-bg);
+  --dc-border: var(--tb-blocked-border);
+  --dc-fg: var(--tb-blocked-fg);
+  --dc-sub: var(--tb-blocked-fg);
+  --dc-icon-bg: var(--surface);
+  --dc-icon-fg: var(--tb-blocked-fg);
+}
+.dc-chip {
+  --chip-bg: var(--surface);
+  --chip-border: var(--line);
+  --chip-fg: var(--ink);
+  --chip-dot: var(--done);
+  background: var(--chip-bg);
+  border: 1px solid var(--chip-border);
+  color: var(--chip-fg);
+}
+.dc-chip[data-tone="optional"] {
+  --chip-bg: var(--surface);
+  --chip-fg: var(--ink-muted);
+  --chip-dot: var(--tb-idle-dot);
+  border-style: dashed;
+}
+.dc-chip[data-tone="warn"] {
+  --chip-bg: var(--tb-paused-bg);
+  --chip-border: var(--tb-paused-border);
+  --chip-fg: var(--tb-paused-fg);
+  --chip-dot: var(--tb-paused-dot);
+}
+.dc-chip[data-tone="fail"] {
+  --chip-bg: var(--tb-blocked-bg);
+  --chip-border: var(--tb-blocked-border);
+  --chip-fg: var(--tb-blocked-fg);
+  --chip-dot: var(--tb-blocked-dot);
+}
+a.dc-chip:hover {
+  filter: brightness(0.97);
+  text-decoration: underline;
+}
+.dc-chip-dot {
+  background: var(--chip-dot);
+}

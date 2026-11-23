@@ -76,19 +76,103 @@ export function hintParts(
   return parts;
 }
 
-/** Warnings that need no action: the gateway is optional while an agent works without it. */
+/** A warning that needs no action: the gateway is optional while an agent works without it. */
+export function isOptionalMissing(status: HarnessStatus, c: DoctorCheck): boolean {
+  return (
+    c.status === "warn" &&
+    c.id === "gateway" &&
+    status.anyReady &&
+    (c.message === "Not configured." ||
+      c.message === "No account pool; agents use their own sign-in.")
+  );
+}
+
 export function needsAttention(status: HarnessStatus): boolean {
   return status.checks.some(
-    (c) =>
-      c.status === "fail" ||
-      (c.status === "warn" &&
-        !(
-          c.id === "gateway" &&
-          status.anyReady &&
-          (c.message === "Not configured." ||
-            c.message === "No account pool; agents use their own sign-in.")
-        )),
+    (c) => c.status === "fail" || (c.status === "warn" && !isOptionalMissing(status, c)),
   );
+}
+
+export type ChipTone = "ok" | "optional" | "warn" | "fail";
+
+export interface DoctorChip {
+  key: string;
+  label: string;
+  tone: ChipTone;
+  /** The reason, shown as a tooltip. */
+  reason: string;
+  route: Route | null;
+}
+
+export interface DoctorView {
+  tone: "ok" | "warn" | "fail";
+  headline: string;
+  summary: string;
+  chips: DoctorChip[];
+  /** Where the main call to action goes while something needs attention. */
+  fix: Route | null;
+}
+
+const CHIP_LABEL: Record<DoctorCheck["id"], string> = {
+  agents: "Agents",
+  gateway: "Gateway",
+  projectsRoot: "Projects folder",
+  git: "Git",
+  dataRoot: "Data folder",
+  sandbox: "Sandbox",
+};
+
+/** What the Doctor card shows: tone, headline, quiet summary and one chip per thing checked. */
+export function doctorView(status: HarnessStatus, pid: string | null): DoctorView {
+  const chips: DoctorChip[] = [];
+  const installed = Object.entries(status.tools).filter(([, t]) => t.installed);
+  for (const [id, t] of installed) {
+    chips.push({
+      key: `tool-${id}`,
+      label: t.displayName,
+      tone: t.ready ? "ok" : "warn",
+      reason: t.ready ? "Ready" : t.readyReason || t.message || "Not ready",
+      route: t.ready ? null : fixRoute("agents", pid),
+    });
+  }
+  const agents = status.checks.find((c) => c.id === "agents");
+  if (!installed.length || (!status.anyReady && agents)) {
+    chips.push({
+      key: "agents",
+      label: "No agent ready",
+      tone: "fail",
+      reason: agents?.message ?? "No coding agent is installed.",
+      route: fixRoute("agents", pid),
+    });
+  }
+  for (const c of status.checks) {
+    if (c.id === "agents") continue;
+    const optional = isOptionalMissing(status, c);
+    chips.push({
+      key: c.id,
+      label: optional ? `${CHIP_LABEL[c.id]}: not set up (optional)` : CHIP_LABEL[c.id],
+      tone: c.status === "pass" ? "ok" : optional ? "optional" : c.status,
+      reason: c.message,
+      route: c.status === "pass" || optional ? null : fixRoute(c.fixPage, pid),
+    });
+  }
+  const blocked = blockReason(status) !== null;
+  const attention = needsAttention(status);
+  const problem = status.checks.find((c) => c.status !== "pass" && !isOptionalMissing(status, c));
+  const ready = Object.values(status.tools).filter((t) => t.ready).length;
+  const passed = status.checks.filter((c) => c.status === "pass").length;
+  const tone = blocked ? "fail" : attention ? "warn" : "ok";
+  return {
+    tone,
+    headline: blocked
+      ? "Boof can't run tasks yet"
+      : attention
+        ? `Needs attention: ${problem?.label ?? "a check"}`
+        : "Everything is ready",
+    summary: `${ready} agent${ready === 1 ? "" : "s"} ready · ${passed} of ${status.checks.length} checks passed`,
+    chips,
+    fix: problem ? fixRoute(problem.fixPage, pid) : null,
+  };
 }
 
 /** The one-line summary of a passing setup. */
