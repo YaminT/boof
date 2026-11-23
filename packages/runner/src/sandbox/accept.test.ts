@@ -378,12 +378,19 @@ describe.skipIf(!linux && !darwin && !required)("sandbox acceptance A9-A12", () 
       const launch = await prepareAgentLaunch({ runner: { sandbox: sandboxSettings } }, fx.ctx);
       if (launch.kind !== "sandbox") throw new Error("expected a sandbox launch");
       const pidFile = join(fx.temp, "timeout-daemon.pid");
+      // The shell waits for the daemon's pid file before it waits for the daemon, so the timeout
+      // can only fire once the daemon is up. 800 ms was not always enough for the sandbox to start
+      // on a busy runner, which left no pid file to read.
       const result = await execCommand(
         "/bin/sh",
-        ["-c", `setsid /bin/sh -c 'echo $$ > "${pidFile}"; exec sleep 30' & wait`],
-        { cwd: fx.wt.path, launch, env: { PATH: "/usr/bin:/bin", LANG: "C" }, timeoutMs: 800 },
+        [
+          "-c",
+          `setsid /bin/sh -c 'echo $$ > "${pidFile}"; exec sleep 30' & while [ ! -s "${pidFile}" ]; do sleep 0.05; done; wait`,
+        ],
+        { cwd: fx.wt.path, launch, env: { PATH: "/usr/bin:/bin", LANG: "C" }, timeoutMs: 5000 },
       );
       expect(result.timedOut).toBe(true);
+      expect(existsSync(pidFile)).toBe(true);
       const pid = Number((await readFile(pidFile, "utf8")).trim());
       for (let i = 0; i < 100 && existsSync(`/proc/${pid}`); i++) {
         await new Promise((resolve) => setTimeout(resolve, 20));
