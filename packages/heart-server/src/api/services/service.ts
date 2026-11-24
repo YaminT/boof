@@ -110,6 +110,7 @@ import {
   type HealthResult,
   type InstallResult,
   type ToolCatalog,
+  execCommand,
 } from "@boof/heart";
 import { checkedWorktreeGit, loadWorktreeRecord } from "@boof/runner";
 import { OpError } from "../errors.js";
@@ -944,6 +945,8 @@ export class TaskService {
       authStore?: AuthStore;
       refreshSandbox?: (settings: Settings) => Promise<void>;
       assessSandbox?: () => Promise<{ ok: boolean; reason: string }>;
+      /** Whether claude-code is signed in (null: could not tell). Tests pass a fake. */
+      claudeAuthProbe?: (path: string) => Promise<boolean | null>;
     } = {},
   ) {
     this.projects = new ProjectStore(root, { isGitRepo, repoCommonDir, initGitRepo });
@@ -961,6 +964,25 @@ export class TaskService {
     this.authStore = opts.authStore ?? new AuthStore(root);
     this.refreshSandboxHook = opts.refreshSandbox;
     this.assessSandboxHook = opts.assessSandbox;
+    this.claudeAuthProbe = opts.claudeAuthProbe ?? probeClaudeAuth;
+  }
+
+  private readonly claudeAuthProbe: (path: string) => Promise<boolean | null>;
+  private claudeAuthCache?: { at: number; path: string; value: boolean | null };
+
+  /** claude-code sign-in: true with the gateway env, else a cached `claude auth status` probe. */
+  private async claudeSignedIn(path: string | undefined): Promise<boolean | null> {
+    if (
+      process.env.ANTHROPIC_BASE_URL &&
+      (process.env.ANTHROPIC_AUTH_TOKEN || process.env.ANTHROPIC_API_KEY)
+    )
+      return true;
+    if (!path) return null;
+    const c = this.claudeAuthCache;
+    if (c && c.path === path && Date.now() - c.at < 60_000) return c.value;
+    const value = await this.claudeAuthProbe(path).catch(() => null);
+    this.claudeAuthCache = { at: Date.now(), path, value };
+    return value;
   }
 
   private owlishClientCache?: { id: string; client: OwlishClient };
@@ -2012,6 +2034,11 @@ export class TaskService {
     let oldest = Date.now();
     const settings = await this.loadSettings();
     const anyProjectKey = await this.anyProjectKey();
+    const claudeFound = installs["claude-code"];
+    const claudeSignedIn =
+      claudeFound?.installed && !claudeFound.hidden
+        ? await this.claudeSignedIn(claudeFound.path)
+        : null;
     for (const info of this.catalog.list()) {
       const found = installs[info.id];
       if (!found || (found.hidden && !includeHidden)) continue;
@@ -2024,6 +2051,7 @@ export class TaskService {
           gatewayConfigured: !!settings.owlish,
           anyProjectKey,
           message: install.message,
+          claudeSignedIn,
         }),
       };
       // With a project: why a task of this project could not start with this tool.
@@ -2171,7 +2199,12 @@ function toolReadiness(
   displayName: string,
   installed: boolean,
   unavailableReason: string | undefined,
-  ctx: { gatewayConfigured: boolean; anyProjectKey: boolean; message: string },
+  ctx: {
+    gatewayConfigured: boolean;
+    anyProjectKey: boolean;
+    message: string;
+    claudeSignedIn?: boolean | null;
+  },
 ): ToolReadiness {
   if (unavailableReason) return { ready: false, readyReason: unavailableReason, fixPage: "agents" };
   if (!installed)
@@ -2194,10 +2227,37 @@ function toolReadiness(
       readyReason: ctx.gatewayConfigured ? "Uses the better-ccflare gateway." : "Uses an API key.",
     };
   }
+  if (id === "claude-code" && ctx.claudeSignedIn === false)
+    return {
+      ready: false,
+      readyReason: "Claude Code is installed but not signed in.",
+      fixHint: "Run `claude` once in a terminal and sign in, then check again.",
+      fixPage: "agents",
+    };
   return {
     ready: true,
     readyReason: `Installed. If it asks you to sign in, run ${id === "claude-code" ? "claude" : id} once in a terminal.`,
   };
+}
+
+/**
+ * `claude auth status`: true when signed in, false when it says it is not, null when it cannot be
+ * told (old CLI, timeout). Only the exit code and the `loggedIn` field are read; nothing is printed.
+ */
+export async function probeClaudeAuth(path: string): Promise<boolean | null> {
+  const res = await execCommand(path, ["auth", "status"], {
+    launch: { kind: "direct" },
+    cwd: process.cwd(),
+    timeoutMs: 5000,
+  });
+  if (res.timedOut) return null;
+  try {
+    const parsed = JSON.parse(res.stdout) as { loggedIn?: unknown };
+    if (typeof parsed.loggedIn === "boolean") return parsed.loggedIn;
+  } catch {
+    /* not JSON */
+  }
+  return null;
 }
 
 function projectNotFound(id: string): OpError {

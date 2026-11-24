@@ -1,5 +1,6 @@
 import type { CSSProperties, ReactNode, Ref } from "react";
 import type { EpicView, Plan, PlanSummary, TaskView } from "../api.js";
+import { unorderedMarker } from "../lib/labels.js";
 import { planChip, waitingFor } from "../lib/plan-grouping.js";
 import { progressLabel, type HierarchyRow } from "../lib/task-hierarchy.js";
 import { Button } from "@/ui/button";
@@ -18,7 +19,7 @@ export type RowEntry =
       task: TaskView;
       hier?: HierarchyRow;
     }
-  /** `pos` is the queue number, or null for a skipped task. */
+  /** `pos` is the queue number, or null for a task that is not in the queue order (skipped, or waiting). */
   | { key: string; kind: "queued"; task: TaskView; pos: number | null; hier?: HierarchyRow }
   | { key: string; kind: "plan"; plan: PlanSummary };
 
@@ -59,7 +60,7 @@ function Marker({ entry, pid }: { entry: RowEntry; pid: string }): ReactNode {
       return <RunningMarker pid={pid} task={entry.task} />;
     case "queued":
       return entry.pos === null ? (
-        <span className="text-ink-muted">skipped</span>
+        <span className="text-ink-muted">{unorderedMarker(entry.task.frontmatter.labels)}</span>
       ) : (
         <span className="block w-full text-right tabular-nums text-ink-muted">{entry.pos}</span>
       );
