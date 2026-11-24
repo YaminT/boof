@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseTask, serializeTask, newTask } from "./task-file.js";
+import { parseTask, parseUpdatedFromPrefix, serializeTask, newTask } from "./task-file.js";
 import { formatInjectedEntry, parseInjected } from "./injected.js";
 import type { TaskFrontmatter } from "./schema.js";
 
@@ -387,5 +387,66 @@ hi
     const task = parseTask(serializeTask(newTask(fm({ parentId: "t1" }), "p")));
     delete task.frontmatter.parentId;
     expect(serializeTask(task)).not.toContain("parentId");
+  });
+});
+
+describe("parseUpdatedFromPrefix", () => {
+  const good = serializeTask(newTask(fm({ id: "a", updated: "2026-07-01T12:00:00.000Z" }), "p"));
+  const body = "## Prompt\n\n" + "word ".repeat(50_000) + "\n";
+  const front = (extra: string, updated = "updated: 2026-07-01T12:00:00.000Z") =>
+    `---\nid: a\ntitle: A\nstatus: done\n${extra}created: 2026-06-01T00:00:00.000Z\n${updated}\n---\n`;
+  const cases: Record<string, string> = {
+    canonical: good,
+    crlf: good.replace(/\n/g, "\r\n"),
+    "quoted updated": front("", 'updated: "2026-07-01T12:00:00.000Z"'),
+    "single-quoted updated": front("", "updated: '2026-07-01T12:00:00.000Z'"),
+    "unquoted timestamp (yaml date)": front("", "updated: 2026-07-01T12:00:00Z"),
+    "missing updated": front("", "x: 1"),
+    "invalid updated": front("", "updated: yesterday"),
+    "multiline value": front("", "updated: >-\n  2026-07-01T12:00:00.000Z"),
+    "multiline title": front("labels:\n  - a\n  - b\n"),
+    "bad epicId (dropped)": front("epicId: Not Kebab\n"),
+    "numeric parentId": front("parentId: 12\n"),
+    "bad priority": front("priority: lots\n"),
+    "fence inside a block scalar": front("note: |\n  a\n  ---\n  b\n"),
+    "closer with trailing text": "---\nid: a\n----\n",
+    "no closer": "---\nid: a\ntitle: A\n",
+    "closer at end without newline": front("").trimEnd(),
+    bom: "\uFEFF" + good,
+    "no front matter": "## Prompt\n\nhi\n",
+    "empty front matter": "---\n---\n",
+    "json front matter": '---json\n{"id":"a"}\n---\n',
+    "huge body": good + body,
+    "huge body, crlf": (good + body).replace(/\n/g, "\r\n"),
+    "huge front matter": front("pad: " + "x".repeat(20_000) + "\n"),
+    "multi-byte at the cut": front("title2: " + "é".repeat(5000) + "\n"),
+    "fence in the body": good + "\n---\nupdated: 1999-01-01T00:00:00.000Z\n---\n",
+  };
+  const outcome = (f: () => string | null): string => {
+    try {
+      return `ok:${f()}`;
+    } catch {
+      return "throws";
+    }
+  };
+  for (const [name, raw] of Object.entries(cases)) {
+    it(`gives what the full parse gives: ${name}`, () => {
+      const old = outcome(() => String(parseTask(raw).frontmatter.updated));
+      const prefix = Buffer.from(raw, "utf8").subarray(0, 8192).toString("utf8");
+      // The caller's contract: null or a throw means "do the full parse".
+      const fast = outcome(() => {
+        const got = parseUpdatedFromPrefix(prefix);
+        return got === null ? String(parseTask(raw).frontmatter.updated) : got;
+      });
+      expect(fast).toBe(old);
+      // And when it does answer, it answers without the full parse.
+      const direct = outcome(() => parseUpdatedFromPrefix(prefix));
+      if (direct.startsWith("ok:") && direct !== "ok:null") expect(direct).toBe(old);
+    });
+  }
+
+  it("answers from the prefix for a canonical file with a huge body", () => {
+    const raw = good + body;
+    expect(parseUpdatedFromPrefix(raw.slice(0, 8192))).toBe("2026-07-01T12:00:00.000Z");
   });
 });

@@ -89,6 +89,27 @@ export function parseTask(raw: string): Task {
 }
 
 /**
+ * The task's `updated` time, read from the front matter alone: `raw` may be just the start of the
+ * file. Returns null when the text is not plainly a complete front matter block (it must open
+ * with a bare `---` line and close with a bare `---` line inside `raw`), and throws what
+ * {@link parseTask} throws for an invalid front matter. The caller falls back to the full parse on
+ * either, so the answer is always the one `parseTask(file).frontmatter.updated` gives.
+ */
+export function parseUpdatedFromPrefix(raw: string): string | null {
+  const open = raw.startsWith("---\n") ? 4 : raw.startsWith("---\r\n") ? 5 : -1;
+  if (open < 0) return null;
+  // gray-matter closes at the first "\n---"; only accept it when that is a whole line.
+  const close = raw.indexOf("\n---", open - 1);
+  if (close < 0) return null;
+  const after = raw.slice(close + 4, close + 6);
+  if (!(after.startsWith("\n") || after === "\r\n")) return null;
+  const end = close + 4 + (after.startsWith("\n") ? 1 : 2);
+  const parsed = matter(raw.slice(0, end));
+  readHierarchyKeys(parsed.data);
+  return TaskFrontmatterSchema.parse(parsed.data).updated;
+}
+
+/**
  * Indent by one space every line that would open a reserved section (as `injected.ts` does), so
  * prompt, agent output and logs cannot split the file or forge another section.
  */

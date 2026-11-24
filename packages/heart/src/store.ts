@@ -1,4 +1,4 @@
-import { readdir, mkdir, rm, stat } from "node:fs/promises";
+import { open, readdir, mkdir, rm, stat } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import { atomicWrite, readText } from "./atomic.js";
 import { appendEvent } from "./events.js";
@@ -9,7 +9,7 @@ import { ALL_STATUSES, statusDir, taskControlDir, taskFilePath, workingAreaDir }
 import { withProcessLock, type ProcessLockOptions } from "./process-lock.js";
 import { nowIso } from "./runtime.js";
 import type { Status } from "./schema.js";
-import { parseTask, serializeTask, type Task } from "./task-file.js";
+import { parseTask, parseUpdatedFromPrefix, serializeTask, type Task } from "./task-file.js";
 
 /** Thrown when a task id does not exist in any status directory. */
 export class TaskNotFoundError extends Error {
@@ -291,6 +291,31 @@ export async function readTaskIfExists(path: string, dirStatus: Status): Promise
   // Location is authoritative: repair the frontmatter status if it drifted.
   if (task.frontmatter.status !== dirStatus) task.frontmatter.status = dirStatus;
   return task;
+}
+
+/** How much of a task file {@link readUpdatedQuick} reads: front matter is a few hundred bytes. */
+const FRONTMATTER_PREFIX_BYTES = 8192;
+
+/**
+ * The `updated` time of a task file from its first bytes, or null when that cannot be told
+ * cheaply and safely (a missing file, an unusual or invalid front matter, any read error). The
+ * caller then does the full read and parse, so every unusual case behaves as before.
+ */
+async function readUpdatedQuick(path: string): Promise<string | null> {
+  try {
+    const handle = await open(path, "r");
+    try {
+      const buf = Buffer.allocUnsafe(FRONTMATTER_PREFIX_BYTES);
+      const { bytesRead } = await handle.read(buf, 0, buf.length, 0);
+      if (bytesRead === 0) return null;
+      // A cut-off multi-byte character can only sit after the closing fence, which is checked.
+      return parseUpdatedFromPrefix(buf.toString("utf8", 0, bytesRead));
+    } finally {
+      await handle.close();
+    }
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -689,7 +714,12 @@ export class TaskStore {
     // Names not seen before are parsed a few at a time, not one after the other.
     const read = await mapPool(fresh, READ_CONCURRENCY, async (name) => {
       try {
-        const got = await this.cachedTask("done", name, join(dir, name));
+        const path = join(dir, name);
+        const quick = cacheFor(this.root).files.has(`done/${name}`)
+          ? null
+          : await readUpdatedQuick(path);
+        if (quick !== null) return { name, at: Date.parse(quick) };
+        const got = await this.cachedTask("done", name, path);
         return { name, at: got ? Date.parse(got.task.frontmatter.updated) : NaN };
       } catch (err) {
         if (!isNotFound(err)) throw err;
