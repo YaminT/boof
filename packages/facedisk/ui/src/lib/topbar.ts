@@ -317,9 +317,17 @@ export interface NextStepInput {
   queued: number;
   tasks: { status: string }[];
   plans: { title: string; status?: string; goalCount: number; doneCount: number }[];
+  /** The server's newest active plan of the project: its title and where its finished work is. */
+  activePlan?: { activeTitle: string | null; finishedBranch?: string | null } | null;
 }
 
-export type NextStep = { to: "tasks" | "wizard" | "plans"; text: string; link: string } | null;
+export type NextStep = {
+  to: "tasks" | "wizard" | "plans";
+  text: string;
+  link: string;
+  /** Tooltip for the link: where the finished work lives, when the server told us. */
+  title?: string;
+} | null;
 
 /**
  * What to do when the runner has nothing to run: queue the drafts, plan the next piece after a
@@ -338,12 +346,17 @@ export function nextStep(input: NextStepInput): NextStep {
   const finished = input.plans.find(
     (p) => p.status !== "archived" && p.goalCount > 0 && p.doneCount >= p.goalCount,
   );
-  if (finished)
+  if (finished) {
+    // The server names the branch for its newest active plan only: use it for that plan.
+    const branch =
+      input.activePlan?.activeTitle === finished.title ? input.activePlan.finishedBranch : null;
     return {
       to: "wizard",
       text: `Plan "${finished.title}" is finished`,
       link: "Plan the next step",
+      ...(branch ? { title: `The finished work is on the ${branch} branch` } : {}),
     };
+  }
   if (!input.tasks.some((t) => ["pending", "running", "action"].includes(t.status)))
     return { to: "wizard", text: "Nothing queued", link: "Plan what's next" };
   return null;

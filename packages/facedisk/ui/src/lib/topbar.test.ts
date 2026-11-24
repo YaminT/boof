@@ -255,6 +255,25 @@ describe("nextStep", () => {
   it("suggests planning when the queue is empty", () => {
     expect(nextStep(base)).toMatchObject({ to: "wizard", text: "Nothing queued" });
   });
+  it("titles the finished-plan link with the branch the server names for that plan", () => {
+    const plans = [{ title: "Ship it", status: "active", goalCount: 2, doneCount: 2 }];
+    const withBranch = nextStep({
+      ...base,
+      plans,
+      activePlan: { activeTitle: "Ship it", finishedBranch: "boof-runner/t2" },
+    });
+    expect(withBranch?.title).toBe("The finished work is on the boof-runner/t2 branch");
+    // No branch, another plan's branch, or an older server: no tooltip.
+    expect(nextStep({ ...base, plans })?.title).toBeUndefined();
+    expect(
+      nextStep({ ...base, plans, activePlan: { activeTitle: "Other", finishedBranch: "b" } })
+        ?.title,
+    ).toBeUndefined();
+    expect(
+      nextStep({ ...base, plans, activePlan: { activeTitle: "Ship it", finishedBranch: null } })
+        ?.title,
+    ).toBeUndefined();
+  });
   it("suggests queueing drafts first", () => {
     const s = nextStep({ ...base, tasks: [{ status: "draft" }, { status: "done" }] });
     expect(s).toMatchObject({ to: "tasks", text: "1 draft task not queued yet" });

@@ -271,6 +271,7 @@ export function TopBar({
     queued,
     tasks: data.tasks.map((t) => ({ status: t.frontmatter.status })),
     plans: data.plans,
+    activePlan: overview?.projects.find((p) => p.id === pid)?.plans,
   });
   const nextRoute = next && pid ? { name: next.to, pid } : null;
 
@@ -364,6 +365,7 @@ export function TopBar({
             <a
               href={formatRoute(nextRoute as Parameters<typeof formatRoute>[0])}
               className="font-medium text-inherit underline"
+              title={next.title}
             >
               {next.link}
             </a>

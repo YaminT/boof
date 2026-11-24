@@ -116,6 +116,9 @@ export const taskStructureEpoch = (): number => structureEpoch;
  * ordinary `Stats` object has no `mtimeNs` on this Node, so a number stat would never invalidate.
  * Callers never receive the stored object.
  */
+/** The mtime of each status directory, in `ALL_STATUSES` order (0n when the directory is absent). */
+export type StatusMtimes = bigint[];
+
 interface RootCache {
   structureGen: number;
   idGen: Map<string, number>;
@@ -412,23 +415,27 @@ export class TaskStore {
    * (a transition writes the destination first) is counted once, under the copy with the later
    * `updated`. A running directory with no `task.md` is not a task.
    */
-  async statusSummary(): Promise<TaskStatusSummary> {
+  async statusSummary(known?: StatusMtimes): Promise<TaskStatusSummary> {
     const cache = cacheFor(this.root);
-    const mtimes = await this.statusDirMtimes();
+    const mtimes = known ?? (await this.statusMtimes());
     const hit = cache.summary;
     if (hit && hit.gen === cache.structureGen && sameBigints(hit.mtimeNs, mtimes)) {
       return copySummary(hit);
     }
     const gen = cache.structureGen;
     const fresh = await this.scanStatusSummary();
-    const after = await this.statusDirMtimes();
+    const after = await this.statusMtimes();
     if (cache.structureGen === gen && sameBigints(mtimes, after)) {
       cache.summary = { gen, mtimeNs: after, counts: fresh.counts, running: fresh.running };
     }
     return copySummary(fresh);
   }
 
-  private statusDirMtimes(): Promise<bigint[]> {
+  /**
+   * The mtime of every status directory, in {@link ALL_STATUSES} order. A caller that needs both
+   * {@link statusSummary} and {@link activity} reads it once and hands it to both.
+   */
+  statusMtimes(): Promise<StatusMtimes> {
     return Promise.all(
       ALL_STATUSES.map(async (status) => {
         try {
@@ -648,15 +655,14 @@ export class TaskStore {
    */
   async activity(
     sinceMs: number,
+    known?: StatusMtimes,
   ): Promise<{ lastActivityMs: number | null; lastFailedMs: number | null; doneSince: number }> {
+    const mtimes = known ?? (await this.statusMtimes());
     let last = 0n;
-    for (const status of ALL_STATUSES) {
-      const m = await this.statusDirMtime(status);
-      if (m > last) last = m;
-    }
-    const failed = await this.statusDirMtime("failed");
+    for (const m of mtimes) if (m > last) last = m;
+    const failed = mtimes[ALL_STATUSES.indexOf("failed")]!;
     let doneSince = 0;
-    const doneMtime = await this.statusDirMtime("done");
+    const doneMtime = mtimes[ALL_STATUSES.indexOf("done")]!;
     if (Number(doneMtime / 1_000_000n) >= sinceMs) {
       const times = await this.doneTimes(doneMtime);
       for (const at of times.values()) if (at >= sinceMs) doneSince++;
@@ -674,20 +680,23 @@ export class TaskStore {
     if (hit && hit.mtimeNs === mtimeNs) return hit.byName;
     const dir = statusDir(this.root, "done");
     const byName = new Map<string, number>();
+    const fresh: string[] = [];
     for (const name of await listMdFiles(dir)) {
       const known = hit?.byName.get(name);
-      if (known !== undefined) {
-        byName.set(name, known);
-        continue;
-      }
+      if (known !== undefined) byName.set(name, known);
+      else fresh.push(name);
+    }
+    // Names not seen before are parsed a few at a time, not one after the other.
+    const read = await mapPool(fresh, READ_CONCURRENCY, async (name) => {
       try {
         const got = await this.cachedTask("done", name, join(dir, name));
-        const at = got ? Date.parse(got.task.frontmatter.updated) : NaN;
-        if (Number.isFinite(at)) byName.set(name, at);
+        return { name, at: got ? Date.parse(got.task.frontmatter.updated) : NaN };
       } catch (err) {
         if (!isNotFound(err)) throw err;
+        return { name, at: NaN };
       }
-    }
+    });
+    for (const { name, at } of read) if (Number.isFinite(at)) byName.set(name, at);
     // A directory changed within the last timestamp tick can change again without a new mtime.
     if (Date.now() - Number(mtimeNs / 1_000_000n) > 2_000) cache.doneTimes = { mtimeNs, byName };
     return byName;

@@ -38,6 +38,27 @@ afterEach(async () => {
 });
 
 describe("TaskStore status index", () => {
+  it("gives the same activity and summary from shared folder mtimes as from its own reads", async () => {
+    for (let i = 0; i < 40; i++) {
+      await store.create(
+        newTask(
+          fm({
+            id: `d${i}`,
+            status: i % 4 === 0 ? "failed" : "done",
+            updated: new Date(Date.now() - i * 1000).toISOString(),
+          }),
+        ),
+      );
+    }
+    const mtimes = await store.statusMtimes();
+    expect(mtimes).toHaveLength(8);
+    const since = Date.now() - 20_500;
+    const own = await store.activity(since);
+    expect(await store.activity(since, mtimes)).toEqual(own);
+    expect(own.doneSince).toBeGreaterThan(0);
+    expect(await store.statusSummary(mtimes)).toEqual(await store.statusSummary());
+  });
+
   it("reports when the folders last changed and how many tasks finished since a time", async () => {
     expect(await store.activity(0)).toMatchObject({ doneSince: 0 });
     await store.create(newTask(fm({ id: "t2", status: "done" })));

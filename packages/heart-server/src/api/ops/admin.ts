@@ -439,17 +439,21 @@ async function computeOverview(ctx: OpContext, input: { tzOffsetMinutes?: number
   const allowed = (pid: string) => authorizeProject(ctx.principal, pid);
   // The project rows, budget, pool and agent auth each read their own files. Waiting for one
   // before the next made this request sit behind the soak's other filesystem work.
+  // The project list is read once for the whole request, and each project's folder mtimes once
+  // for both its counts and its activity.
+  const all = await ctx.services.listProjects();
   const [projects, budget, pool, agentAuth] = await Promise.all([
     (async () => {
-      const listed = (await ctx.services.listProjects()).filter((p) => allowed(p.id));
+      const listed = all.filter((p) => allowed(p.id));
       return Promise.all(
         listed.map(async (p) => {
           const svc = ctx.services.forProject(p.id);
           const midnightMs = dayStart(Date.now(), input.tzOffsetMinutes);
+          const mtimes = await svc.statusMtimes();
           const [{ counts, running }, plans, activity] = await Promise.all([
-            svc.statusSummary(),
+            svc.statusSummary(mtimes),
             svc.plans.list().catch(() => []),
-            svc.activity(midnightMs).catch(() => null),
+            svc.activity(midnightMs, mtimes).catch(() => null),
           ]);
           const active = plans
             .filter((pl) => pl.status === "active")
@@ -484,9 +488,9 @@ async function computeOverview(ctx: OpContext, input: { tzOffsetMinutes?: number
         }),
       );
     })(),
-    ctx.services.budgetStatus(allowed),
+    ctx.services.budgetStatus(allowed, all),
     ctx.services.poolStatus(),
-    ctx.services.agentAuthStatus(allowed),
+    ctx.services.agentAuthStatus(allowed, undefined, all),
   ]);
   return {
     enabled: runner.enabled,
