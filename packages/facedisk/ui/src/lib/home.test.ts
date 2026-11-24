@@ -102,7 +102,9 @@ describe("homeCards", () => {
   it("carries plan, goals and activity text", () => {
     const d = cards.find((c) => c.project.id === "d")!;
     expect(d.planTitle).toBe("Ship");
-    expect(d.goalsText).toBe("goals 7/11");
+    expect(d.goalsText).toBe("7 of 11 goals done");
+    // Both counts read "N of M <unit> done", so the two denominators are labelled alike.
+    expect(cards.find((c) => c.total > 0)!.progressText).toMatch(/^\d+ of \d+ tasks done$/);
     expect(d.activityText).toBe("active 5m ago");
   });
   it("sorts cards without lastActivity by name, after the ones with activity", () => {

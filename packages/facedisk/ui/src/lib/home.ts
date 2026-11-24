@@ -105,7 +105,7 @@ export function homeCards(
       planTitle: plans?.activeTitle ?? null,
       goalsText:
         plans?.activeTitle && plans.goalsTotal > 0
-          ? `goals ${plans.goalsDone}/${plans.goalsTotal}`
+          ? `${plans.goalsDone} of ${plans.goalsTotal} goals done`
           : null,
       lastActivity: last,
       activityText: when ? (when === "just now" ? "active just now" : `active ${when}`) : null,

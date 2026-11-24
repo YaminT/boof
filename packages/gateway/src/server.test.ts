@@ -669,6 +669,22 @@ describe("Failover", () => {
     expect(check.headers["anthropic-version"]).toBe("2023-06-01");
   });
 
+  it("a hung 401 re-check is bounded by the re-check budget", async () => {
+    await boot({ recheckBudgetMs: 150 });
+    handler = (q, res) => {
+      if (q.url === "/v1/models") return; // never answers
+      res.writeHead(401, { "content-type": "application/json" });
+      res.end(
+        JSON.stringify({ type: "error", error: { type: "authentication_error", message: "x" } }),
+      );
+    };
+    const t0 = Date.now();
+    const r = await call({});
+    expect(Date.now() - t0).toBeLessThan(2000);
+    expect(r.status).toBe(401);
+    expect(pool.accountList().every((a) => !a.paused)).toBe(true);
+  });
+
   it("a credit error marks the account out of credit and fails over", async () => {
     await boot();
     handler = (_q, res, s) => {

@@ -72,7 +72,7 @@ describe("ProjectCard", () => {
   it("shows state, progress, plan, running task and activity", () => {
     expect(html).toContain("Needs you: 1");
     expect(html).toContain("7 of 11 tasks done");
-    expect(html).toContain("goals 7/11");
+    expect(html).toContain("7 of 11 goals done");
     expect(html).toContain("Plan: Launch");
     expect(html).toContain("Running now: Fix login");
     expect(html).toContain("active 5m ago");
