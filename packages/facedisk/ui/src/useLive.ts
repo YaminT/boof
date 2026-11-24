@@ -37,6 +37,7 @@ function parse<T>(data: string): T | null {
 // closes with the last.
 const subscribers = new Set<{ current: LiveHandlers }>();
 let stop: (() => void) | null = null;
+let offToken: (() => void) | null = null;
 let up = false;
 
 function each(fn: (h: LiveHandlers) => void): void {
@@ -84,6 +85,9 @@ function start(): () => void {
     onOpen: () => {
       invalidateLiveData();
       setUp(true);
+      // A stream that opens always means live, even when `up` was already true (a key stored over
+      // a stream that never dropped): the shared state may have left `live` meanwhile.
+      reportStreamUp();
       if (opened) each((h) => h.onReconnect?.());
       opened = true;
     },
@@ -119,12 +123,22 @@ export function useLive(handlers: LiveHandlers): void {
   useEffect(() => {
     subscribers.add(ref);
     if (up) ref.current.onStatus?.(true);
-    if (!stop) stop = start();
+    if (!stop) {
+      stop = start();
+      // A key stored while the stream is open (sign-in after the server restarted and the browser
+      // dropped its key): the open stream still carries the old key. Reopen it with the new one.
+      offToken = onTokenChange(() => {
+        stop?.();
+        stop = start();
+      });
+    }
     return () => {
       subscribers.delete(ref);
       if (subscribers.size === 0 && stop) {
         stop();
         stop = null;
+        offToken?.();
+        offToken = null;
         up = false;
       }
     };

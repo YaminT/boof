@@ -114,4 +114,21 @@ describe("connection state through the real event stream", () => {
     await vi.advanceTimersByTimeAsync(5_000);
     expect(getConnection().state).not.toBe("signed-out");
   });
+
+  it("a request 401 over a still-open stream, then a new key: the stream restarts and shows live", async () => {
+    // The server restarted behind an open stream: a request 401s (key dropped) while the stream
+    // itself stays up. Storing a key must end in `live`, not stay on `reconnecting`.
+    useLive({});
+    await settle();
+    expect(getConnection().state).toBe("live");
+    const { reportSignedOut } = await import("./lib/connection.js");
+    reportSignedOut();
+    expect(getConnection().state).toBe("signed-out");
+
+    const { setToken } = await import("./token.js");
+    vi.stubGlobal("sessionStorage", { getItem: () => null, setItem() {}, removeItem() {} });
+    setToken("k2");
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(getConnection()).toEqual({ state: "live", since: null });
+  });
 });
