@@ -68,7 +68,9 @@ function rig({ sseUp = true } = {}): Rig {
       controller?.enqueue(enc.encode(`event: message\ndata: ${JSON.stringify(event)}\n\n`)),
     drop: () => controller?.close(),
   };
-  const fetchMock = vi.fn(async (url: string) => {
+  const fetchMock = vi.fn(async (rawUrl: string) => {
+    // The overview poll carries the browser's UTC offset; the rig keys on the bare path.
+    const url = String(rawUrl).replace(/\?tzOffsetMinutes=-?\d+/, "");
     const path = String(url).split("?nonce=")[0];
     const key = String(url).startsWith("healthz") ? "healthz" : path;
     counts.set(key, (counts.get(key) ?? 0) + 1);

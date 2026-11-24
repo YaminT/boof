@@ -96,6 +96,22 @@ export class Pool {
       pool.state.set(a.id, saved.get(a.id) ?? freshState());
       pool.resumeSeen.set(a.id, a.resumedAt ?? 0);
     }
+    // The earlier release kept a manual pause in state.json only. Move it into accounts.json once,
+    // or syncFlags would clear it. An account resumed by this release has `resumedAt` and is left alone.
+    const legacy = new Set(
+      pool.accounts
+        .filter((a) => !a.paused && a.resumedAt === undefined)
+        .filter((a) => saved.get(a.id)?.paused && saved.get(a.id)?.pauseReason === "manual")
+        .map((a) => a.id),
+    );
+    if (legacy.size > 0) {
+      const updated = await opts.store.update((current) => ({
+        accounts: current.map((x) => (legacy.has(x.id) ? { ...x, paused: true } : x)),
+        result: undefined,
+      }));
+      pool.accounts = updated.accounts;
+      pool.signature = updated.signature;
+    }
     pool.syncFlags(pool.accounts);
     return pool;
   }

@@ -357,4 +357,25 @@ describe("manual pause across processes", () => {
     await cli.resume("a");
     expect(serve.pick()?.id).toBe("a");
   });
+
+  it("a manual pause recorded in the old state.json format moves into accounts.json on open", async () => {
+    const first = await three();
+    const [a] = first.accountList();
+    await first.flush();
+    // The earlier release: the pause lives in state.json only.
+    const state = await store.loadState();
+    state.set(a!.id, { ...state.get(a!.id)!, paused: true, pauseReason: "manual" });
+    await store.saveState(state);
+    expect((await store.loadAccounts()).every((x) => !x.paused)).toBe(true);
+
+    const second = await open();
+    expect(second.accountList().find((x) => x.id === a!.id)).toMatchObject({
+      paused: true,
+      pauseReason: "manual",
+    });
+    expect((await store.loadAccounts()).find((x) => x.id === a!.id)?.paused).toBe(true);
+    // A later start (state.json no longer needed for it) keeps the pause.
+    const third = await open();
+    expect(third.accountList().find((x) => x.id === a!.id)?.paused).toBe(true);
+  });
 });

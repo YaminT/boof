@@ -7,6 +7,7 @@ const idle = (over: Partial<Parameters<typeof stepFinished>[1]> = {}) => ({
   running: [],
   queued: 0,
   now: 1000,
+  doneTotal: 0,
   ...over,
 });
 const state = (over: Partial<TopbarState> = {}): TopbarState => ({
@@ -20,21 +21,25 @@ const state = (over: Partial<TopbarState> = {}): TopbarState => ({
 });
 
 describe("finished memory", () => {
-  it("counts only the tasks that are done, not failed or stopped ones", () => {
-    let m = stepFinished(EMPTY_FINISHED, idle({ kind: "running", running: ["p/a"] }));
-    m = stepFinished(m, idle({ kind: "running", running: ["p/b"], queued: 1 }));
-    m = stepFinished(m, idle({ now: 5000, notDone: ["p/b"] }));
+  it("counts only tasks that became done, across all projects, not failed or stopped ones", () => {
+    let m = stepFinished(EMPTY_FINISHED, idle({ kind: "running", running: ["p/a"], doneTotal: 7 }));
+    m = stepFinished(m, idle({ kind: "running", running: ["q/b"], queued: 1, doneTotal: 8 }));
+    // p/a done, q/b failed: the server's done count rose by one.
+    m = stepFinished(m, idle({ now: 5000, doneTotal: 8 }));
     expect(m.finished).toEqual({ count: 1, at: 5000 });
-    let all = stepFinished(EMPTY_FINISHED, idle({ kind: "running", running: ["p/a"] }));
-    all = stepFinished(all, idle({ now: 5000, notDone: ["p/a"] }));
+    let all = stepFinished(
+      EMPTY_FINISHED,
+      idle({ kind: "running", running: ["p/a"], doneTotal: 3 }),
+    );
+    all = stepFinished(all, idle({ now: 5000, doneTotal: 3 }));
     expect(all.finished).toBeNull();
   });
 
   it("remembers the tasks that ran and finishes when the queue empties", () => {
     let m = stepFinished(EMPTY_FINISHED, idle({ kind: "running", running: ["p/a"] }));
-    m = stepFinished(m, idle({ kind: "running", running: ["p/b"], queued: 1 }));
+    m = stepFinished(m, idle({ kind: "running", running: ["p/b"], queued: 1, doneTotal: 1 }));
     expect(m.finished).toBeNull();
-    m = stepFinished(m, idle({ now: 5000 }));
+    m = stepFinished(m, idle({ now: 5000, doneTotal: 2 }));
     expect(m.finished).toEqual({ count: 2, at: 5000 });
     expect(withFinished(state(), m, 5001)).toMatchObject({
       tone: "finished",

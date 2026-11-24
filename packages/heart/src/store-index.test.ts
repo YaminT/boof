@@ -49,6 +49,29 @@ describe("TaskStore status index", () => {
     expect((await store.activity(after)).doneSince).toBe(0);
   });
 
+  it("counts a done task by the completion time in the task, not the file mtime, and caches it", async () => {
+    const dir = statusDir(root, "done");
+    await mkdir(dir, { recursive: true });
+    const old = Date.parse("2026-06-04T10:00:00.000Z");
+    await writeFile(join(dir, "old.md"), serializeTask(newTask(fm({ id: "old", status: "done" }))));
+    await writeFile(
+      join(dir, "now.md"),
+      serializeTask(newTask(fm({ id: "now", status: "done", updated: new Date().toISOString() }))),
+    );
+    // Both files were just written (fresh mtime): only the recorded completion time counts.
+    const day = Date.now() - 3_600_000;
+    expect(old).toBeLessThan(day);
+    expect((await store.activity(day)).doneSince).toBe(1);
+    expect((await store.activity(old - 1)).doneSince).toBe(2);
+    // Age the folder past the timestamp tick: the next calls read no files.
+    const aged = new Date(Date.now() - 60_000);
+    await utimes(dir, aged, aged);
+    await store.activity(day);
+    takeTaskFileReads();
+    expect((await store.activity(day)).doneSince).toBe(1);
+    expect(takeTaskFileReads()).toBe(0);
+  });
+
   it("counts by directory and names the running tasks, without reading the files", async () => {
     await store.create(newTask(fm()));
     await store.create(newTask(fm({ id: "t2", status: "done" })));

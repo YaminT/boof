@@ -20,6 +20,8 @@ export interface RunnerOverview {
     plans?: { activeTitle: string | null; goalsDone: number; goalsTotal: number };
     /** When the task folders last changed (ISO), and tasks finished since local midnight. */
     lastActivity?: string | null;
+    /** When a task last moved into `failed` (ISO); absent from an older server. */
+    lastFailure?: string | null;
     doneToday?: number;
   }[];
 }
