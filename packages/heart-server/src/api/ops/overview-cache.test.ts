@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { AuthStore, LOCAL_PRINCIPAL } from "@boof/heart";
+import { AuthStore, LOCAL_PRINCIPAL, TaskStore } from "@boof/heart";
 import { MockTool, ToolRegistry } from "@boof/runner";
 import type { OpContext } from "../define-op.js";
 import { getOp } from "../registry.js";
@@ -52,6 +52,18 @@ describe("runner.overview cache", () => {
     vi.useFakeTimers({ toFake: ["Date"], now: Date.now() + 5_000 });
     await overview();
     expect(spy).toHaveBeenCalledTimes(2);
+  });
+
+  it("reads the project list once and each project's folder times once for counts and activity", async () => {
+    await service.forProject("alpha").create({ title: "t", status: "done" });
+    const list = vi.spyOn(service.projects, "list");
+    const mtimes = vi.spyOn(TaskStore.prototype, "statusMtimes");
+    const out = await overview();
+    expect(list).toHaveBeenCalledTimes(1);
+    // One shared read, plus the summary's own check that nothing moved while it scanned.
+    expect(mtimes).toHaveBeenCalledTimes(2);
+    expect(out.projects).toHaveLength(1);
+    expect(out.projects[0]!.counts.done).toBe(1);
   });
 
   it("shows a task created or a project paused by this process at once", async () => {

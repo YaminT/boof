@@ -120,7 +120,7 @@ import { statusDowngraded, subtasksOpen, type Warning } from "../warnings.js";
 import { PlanService } from "./plan-service.js";
 import type { ConciergeService } from "../../concierge/service.js";
 import { countReadyAgents } from "@boof/heart/agent-count";
-import type { ConciergeAgent } from "@boof/heart";
+import type { ConciergeAgent, StatusMtimes } from "@boof/heart";
 import { cleanN8nName } from "../../n8n/text.js";
 
 export interface CreateTaskInput {
@@ -204,13 +204,18 @@ export class ProjectService {
   }
 
   /** When the task folders last changed, and how many tasks finished since `sinceMs`. */
-  activity(sinceMs: number) {
-    return this.tasks.activity(sinceMs);
+  activity(sinceMs: number, mtimes?: StatusMtimes) {
+    return this.tasks.activity(sinceMs, mtimes);
   }
 
   /** Status counts and the running ids. Does not read task bodies. */
-  statusSummary() {
-    return this.tasks.statusSummary();
+  statusSummary(mtimes?: StatusMtimes) {
+    return this.tasks.statusSummary(mtimes);
+  }
+
+  /** The mtime of every status folder: read once, pass to {@link activity} and {@link statusSummary}. */
+  statusMtimes() {
+    return this.tasks.statusMtimes();
   }
 
   get(id: string): Promise<Task | null> {
@@ -1078,13 +1083,15 @@ export class TaskService {
     authorized: (projectId: string) => boolean,
     /** A role to count as claude-agent for one project, e.g. the planner of a plan-draft task. */
     forced?: { projectId: string; role: "planner" | "developer" | "observer" | "reviewer" },
+    /** The project list the caller already read (non-archived): saves another directory read. */
+    listed?: Project[],
   ) {
     const settings = await this.loadSettings();
     const result = [];
     let gatewayEligibility: AgentSdkEligibility | null | undefined;
     // One admin-route probe for the whole status. A key the gateway accepts is not separate.
     let agentProbe: AdminRouteProbe | undefined;
-    const projects = (await this.listProjects()).filter(
+    const projects = (listed ?? (await this.listProjects())).filter(
       (project) => authorized(project.id) && !project.archived,
     );
     // Pending-role scans are directory reads. One project at a time left each read waiting on
@@ -1885,8 +1892,12 @@ export class TaskService {
    * Today's budget figures for the projects `allowed` accepts (archived ones excluded). Scopes of
    * other projects are left out; the global and tool scopes are always included.
    */
-  async budgetStatus(allowed: (projectId: string) => boolean = () => true): Promise<BudgetStatus> {
-    const projects = (await this.projects.list()).filter((p) => allowed(p.id));
+  async budgetStatus(
+    allowed: (projectId: string) => boolean = () => true,
+    /** The project list the caller already read: saves another directory read. */
+    listed?: Project[],
+  ): Promise<BudgetStatus> {
+    const projects = (listed ?? (await this.projects.list())).filter((p) => allowed(p.id));
     return evaluateBudget(this.root, await this.settingsStore.load(), projects);
   }
 
