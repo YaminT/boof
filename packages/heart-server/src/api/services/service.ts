@@ -110,6 +110,7 @@ import {
   type HealthResult,
   type InstallResult,
   type ToolCatalog,
+  taskStructureEpoch,
 } from "@boof/heart";
 import { checkedWorktreeGit, loadWorktreeRecord } from "@boof/runner";
 import { OpError } from "../errors.js";
@@ -1419,7 +1420,74 @@ export class TaskService {
    * `auto` the projects root itself must be under an allowed root. Otherwise 403
    * `project_root_not_allowed`.
    */
-  async createProject(
+  // The runner overview is cached for a moment; these writes drop it (see overviewCached).
+  async createProject(...a: Parameters<TaskService["createProjectInner"]>) {
+    try {
+      return await this.createProjectInner(...a);
+    } finally {
+      this.overviewEpoch++;
+    }
+  }
+  async updateProject(...a: Parameters<TaskService["updateProjectInner"]>) {
+    try {
+      return await this.updateProjectInner(...a);
+    } finally {
+      this.overviewEpoch++;
+    }
+  }
+  async removeProject(...a: Parameters<TaskService["removeProjectInner"]>) {
+    try {
+      return await this.removeProjectInner(...a);
+    } finally {
+      this.overviewEpoch++;
+    }
+  }
+  async updateSettings(...a: Parameters<TaskService["updateSettingsInner"]>) {
+    try {
+      return await this.updateSettingsInner(...a);
+    } finally {
+      this.overviewEpoch++;
+    }
+  }
+
+  private overviewEpoch = 0;
+  private readonly overviewMemo = new Map<
+    string,
+    { at: number; epoch: number; structure: number; value: Promise<unknown> }
+  >();
+
+  /**
+   * One runner.overview answer per key, shared by concurrent callers and reused for
+   * {@link OVERVIEW_TTL_MS}. It is dropped at once when this process changes settings, a project
+   * or a task's status folder; budget spend, plans and edits by other processes show up when the
+   * TTL ends. A failed compute is not kept.
+   */
+  overviewCached<T>(key: string, compute: () => Promise<T>): Promise<T> {
+    const now = Date.now();
+    const structure = taskStructureEpoch();
+    const hit = this.overviewMemo.get(key);
+    if (
+      hit &&
+      hit.epoch === this.overviewEpoch &&
+      hit.structure === structure &&
+      now - hit.at < OVERVIEW_TTL_MS
+    ) {
+      return hit.value as Promise<T>;
+    }
+    const value = compute();
+    const entry = { at: now, epoch: this.overviewEpoch, structure, value };
+    this.overviewMemo.set(key, entry);
+    value.catch(() => {
+      if (this.overviewMemo.get(key) === entry) this.overviewMemo.delete(key);
+    });
+    if (this.overviewMemo.size > 64) {
+      for (const [k, e] of this.overviewMemo)
+        if (now - e.at >= OVERVIEW_TTL_MS) this.overviewMemo.delete(k);
+    }
+    return value;
+  }
+
+  private async createProjectInner(
     input: CreateProjectBodyInput & { origin?: ProjectOrigin },
     actor?: Principal,
   ): Promise<Project> {
@@ -1524,7 +1592,7 @@ export class TaskService {
     }
   }
 
-  async updateProject(
+  private async updateProjectInner(
     id: string,
     patch: ProjectPatch,
     actor?: Principal,
@@ -1596,7 +1664,7 @@ export class TaskService {
   }
 
   /** Archive (default) or purge a project; refused while one of its tasks runs. */
-  async removeProject(
+  private async removeProjectInner(
     id: string,
     opts: { purge?: boolean } = {},
     actor?: Principal,
@@ -1892,7 +1960,7 @@ export class TaskService {
   }
 
   /** Apply a settings patch; a change of `runner.enabled` appends a global `runner.enabled` event. */
-  async updateSettings(
+  private async updateSettingsInner(
     patch: SettingsPatch,
     actor?: Principal,
     expectedVersion?: string,
@@ -2206,6 +2274,8 @@ function projectNotFound(id: string): OpError {
 
 /** A health check younger than this is not repeated: each check is a paid model call per tool. */
 const HEALTH_COOLDOWN_MS = 60_000;
+/** How long one runner.overview answer is reused (see TaskService.overviewCached). */
+const OVERVIEW_TTL_MS = 1_500;
 
 const ORIGIN_KIND = { harness: "api", mcp: "mcp", ui: "ui", cli: "cli" } as const;
 
