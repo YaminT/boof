@@ -2,6 +2,7 @@ import { Button } from "../ui/button.js";
 import { useRecheckOnOpen } from "../useHarnesses.js";
 import type { HarnessStatus } from "../api-types.js";
 import type { HarnessesState } from "../useHarnesses.js";
+import { useConnection } from "../lib/useConnection.js";
 import { blockReason, summarize } from "../lib/doctor.js";
 import { CheckRows } from "./CheckRows.js";
 import { HarnessPanel } from "../settings/HarnessPanel.js";
@@ -25,6 +26,7 @@ export function DoctorPage({
 }) {
   const { status, loading, failed, denied, refresh } = harnesses;
   useRecheckOnOpen(harnesses, 0);
+  const { state: conn } = useConnection();
   if (denied) {
     return (
       <Shell>
@@ -44,7 +46,16 @@ export function DoctorPage({
   return (
     <Shell>
       {!status && loading && <p className="m-0 text-ink-muted">Checking this computer…</p>}
-      {failed && !status && (
+      {failed && !status && conn !== "live" && (
+        <p className="m-0 text-ink-muted">
+          {conn === "signed-out"
+            ? "Sign in needed."
+            : conn === "offline"
+              ? "Offline. The checks run again when boof is back."
+              : "Checking…"}
+        </p>
+      )}
+      {failed && !status && conn === "live" && (
         <p className="m-0 text-attention">Could not run the checks. Try again.</p>
       )}
       {status && (
@@ -59,7 +70,7 @@ export function DoctorPage({
                 : "All set: an agent is ready"
               : (reason ?? "Cannot run tasks yet")}
           </p>
-          <CheckRows checks={status.checks} pid={pid} />
+          <CheckRows status={status} pid={pid} />
           <HarnessPanel
             status={status as HarnessStatus}
             loading={loading}

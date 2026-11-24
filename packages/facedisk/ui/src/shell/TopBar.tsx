@@ -46,6 +46,7 @@ import {
   withFinished,
   type FinishedMemory,
 } from "../lib/finished.js";
+import { ConnectionIndicator } from "./ConnectionIndicator.js";
 import { announcementOf } from "../lib/topbar-announce.js";
 import { StopTaskDialog } from "./StopTaskDialog.js";
 import { toast } from "sonner";
@@ -404,6 +405,7 @@ export function TopBar({
               ))}
             </select>
           ))}
+        <ConnectionIndicator />
         {harnesses.status !== null && !harnesses.status.anyReady && (
           <a
             href={formatRoute({ name: "doctor" })}

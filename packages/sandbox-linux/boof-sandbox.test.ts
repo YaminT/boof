@@ -722,14 +722,14 @@ describe.skipIf(process.platform !== "linux" || hostAbi < 6)("boof-sandbox", () 
 
   it("A reaps exited orphans while the command runs and keeps the command's own status", async () => {
     await tree();
-    // 2,000 reparented orphans exit while the command runs. Without a reap they stay zombies and
-    // use up a cap of 800 of headroom, so bash stops being able to fork. The shell builtin keeps
+    // 1,000 reparented orphans exit while the command runs. Without a reap they stay zombies and
+    // use up a cap of 300 of headroom, so bash stops being able to fork. The shell builtin keeps
     // this free of exec, and the loop's last command sets the exit status.
     const result = await run(
       basePolicy([]),
-      ["/usr/bin/bash", "-c", "for i in {1..2000}; do ( : & ); done; echo orphans-done; exit 42"],
+      ["/usr/bin/bash", "-c", "for i in {1..1000}; do ( : & ); done; echo orphans-done; exit 42"],
       60000,
-      { ...process.env, BOOF_SANDBOX_NPROC_FLOOR: "0", BOOF_SANDBOX_NPROC_HEADROOM: "800" },
+      { ...process.env, BOOF_SANDBOX_NPROC_FLOOR: "0", BOOF_SANDBOX_NPROC_HEADROOM: "300" },
     );
     expect(result.stderr).not.toContain("fork:");
     expect(result.stdout).toContain("orphans-done");
@@ -787,7 +787,11 @@ describe.skipIf(process.platform !== "linux" || hostAbi < 6)("boof-sandbox", () 
         "--cpu=2:2",
       ]);
       expect(result.code).not.toBe(0);
-      await new Promise((resolve) => setTimeout(resolve, 3000));
+      // The limit itself, read straight away: waiting for a 2 s CPU budget to run out would pass
+      // vacuously on a loaded machine where the busy loop gets less than 2 s of CPU in 3 s.
+      expect(readFileSync(`/proc/${outside.pid}/limits`, "utf8")).toMatch(
+        /^Max cpu time\s+unlimited\s+unlimited/m,
+      );
       expect(outside.exitCode).toBeNull();
       expect(outside.signalCode).toBeNull();
     } finally {
@@ -837,20 +841,24 @@ describe.skipIf(process.platform !== "linux" || hostAbi < 6)("boof-sandbox", () 
     expect(raced.stdout).toMatch(/limits nproc=/);
   });
 
-  it("N1 starts reliably while same-uid processes churn", async () => {
-    await tree();
-    const workers = Array.from({ length: 6 }, () =>
-      spawn("sh", ["-c", "while :; do sh -c 'exit 0'; done"], { stdio: "ignore" }),
-    );
-    try {
-      for (let i = 0; i < 25; i += 1) {
-        const result = await run(basePolicy([]), [probe, "limits"], 8000, undefined, testHelper);
-        expect(result.code).toBe(0);
+  it(
+    "N1 starts reliably while same-uid processes churn",
+    async () => {
+      await tree();
+      const workers = Array.from({ length: 6 }, () =>
+        spawn("sh", ["-c", "while :; do sh -c 'exit 0'; done"], { stdio: "ignore" }),
+      );
+      try {
+        for (let i = 0; i < 25; i += 1) {
+          const result = await run(basePolicy([]), [probe, "limits"], 8000, undefined, testHelper);
+          expect(result.code).toBe(0);
+        }
+      } finally {
+        for (const worker of workers) worker.kill("SIGKILL");
       }
-    } finally {
-      for (const worker of workers) worker.kill("SIGKILL");
-    }
-  });
+    },
+    25 * 8000 + 10_000,
+  ); // each run has its own 8 s deadline; the test may use all of them
 
   it("tears down a storm that keeps forking within a deadline and leaves no survivor", async () => {
     await tree();
@@ -901,7 +909,10 @@ describe.skipIf(process.platform !== "linux" || hostAbi < 6)("boof-sandbox", () 
     child.stdout?.resume();
     child.stderr?.resume();
     try {
-      await new Promise((resolve) => setTimeout(resolve, 2500));
+      // Wait for the storm to build up. A fixed delay is too short when the machine is loaded.
+      for (let i = 0; i < 1000 && stormPids().length <= 100 && !closed; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
       expect(stormPids().length).toBeGreaterThan(100);
       const stoppedAt = performance.now();
       child.kill("SIGTERM");
@@ -991,14 +1002,24 @@ describe.skipIf(process.platform !== "linux" || hostAbi < 6)("boof-sandbox", () 
     expect(result.stdout.trim()).toBe(`arch ${expected}`);
   });
 
-  it("builds 65534 port rules in under 1s", async () => {
+  it("builds 65534 port rules in about a second at most", async () => {
     await tree();
     const text = basePolicy([9]);
-    const result = await run(text, [probe, "pair-connect4", "9", "1"], 5000);
+    const result = await run(text, [probe, "pair-connect4", "9", "1"], 30000);
     expect(result.code).toBe(0);
     expect(result.stdout).toBe("denied EACCES\nallowed ECONNREFUSED\n");
-    expect(result.ms).toBeLessThan(1000);
-  });
+    // Wall time includes starting two processes, so compare with a policy of one rule run the same
+    // way, best of three: a busy machine slows both runs, and only the rule build is in the gap.
+    const best = async (policyText: string) => {
+      let min = Infinity;
+      for (let i = 0; i < 3; i++)
+        min = Math.min(min, (await run(policyText, [probe, "pair-connect4", "9", "1"], 30000)).ms);
+      return min;
+    };
+    const small = await best(basePolicy([]));
+    const large = await best(text);
+    expect(large - small).toBeLessThan(1000);
+  }, 120_000); // seven runs of the helper, each with its own 30 s deadline
 
   it("build.mjs exits 0 with a message and no binary when the compiler is missing", () => {
     const out = join(dist, "boof-sandbox");

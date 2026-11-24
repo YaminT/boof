@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api, ApiError } from "./api.js";
 import type { HarnessStatus } from "./api-types.js";
 import { shouldRecheckOnOpen } from "./lib/doctor.js";
+import { useConnection } from "./lib/useConnection.js";
 
 export interface HarnessesState {
   /** The last answer; null while the first check is running or when it failed. */
@@ -40,6 +41,16 @@ export function useHarnesses(projectId?: string): HarnessesState {
     };
   }, [attempt, projectId]);
   const refresh = useCallback(() => setAttempt((n) => n + 1), []);
+  // The checks that failed while boof was unreachable run again when the connection returns.
+  const { state } = useConnection();
+  const wasDown = useRef(false);
+  useEffect(() => {
+    if (state !== "live") wasDown.current = true;
+    else if (wasDown.current) {
+      wasDown.current = false;
+      if (failed && !denied) setAttempt((n) => n + 1);
+    }
+  }, [state, failed, denied]);
   return { status, loading, failed, denied, refresh };
 }
 

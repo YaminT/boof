@@ -15,6 +15,7 @@ const { useRunningStep } = await import("./lib/useRunningStep.js");
 const { useHeldScopes } = await import("./lib/useHeldScopes.js");
 const { useHarnesses } = await import("./useHarnesses.js");
 const { getUpdateNotice } = await import("./api.js");
+const { getConnection, resetConnection } = await import("./lib/connection.js");
 
 class MemoryStorage {
   private m = new Map<string, string>();
@@ -128,10 +129,13 @@ beforeEach(() => {
   resetInstanceProof();
   invalidateCache();
   (globalThis as { __holder?: { id: string | null } }).__holder = { id: null };
+  resetConnection();
   setToken("boof_saved_key");
   sessionStorage.setItem("boofInstance", INSTANCE);
+  trackWebCrypto();
 });
 afterEach(() => {
+  vi.restoreAllMocks();
   vi.useRealTimers();
   vi.unstubAllGlobals();
   clearToken();
@@ -140,11 +144,29 @@ afterEach(() => {
 const MIN = 60_000;
 const realSetTimeout = globalThis.setTimeout;
 
-/** Advance fake time in 1 s steps, yielding to the real event loop (WebCrypto is not faked). */
+/** WebCrypto work in flight. It runs on the thread pool, outside the fake clock. */
+let cryptoInFlight = 0;
+function trackWebCrypto(): void {
+  cryptoInFlight = 0;
+  for (const name of ["importKey", "sign"] as const) {
+    const real = crypto.subtle[name].bind(crypto.subtle) as (...a: unknown[]) => Promise<unknown>;
+    vi.spyOn(crypto.subtle, name).mockImplementation(((...args: unknown[]) => {
+      cryptoInFlight++;
+      return real(...args).finally(() => cryptoInFlight--);
+    }) as never);
+  }
+}
+
+/**
+ * Advance fake time in 1 s steps. After each step wait, on the real event loop, until no WebCrypto
+ * call is in flight: a fixed real delay is too short on a loaded machine.
+ */
 async function advance(ms: number): Promise<void> {
+  const tick = () => new Promise((r) => realSetTimeout(r, 0));
   for (let left = ms; left > 0; left -= 1_000) {
     await vi.advanceTimersByTimeAsync(Math.min(1_000, left));
-    await new Promise((r) => realSetTimeout(r, 1));
+    await tick();
+    while (cryptoInFlight > 0) await tick();
   }
 }
 
@@ -168,6 +190,18 @@ describe("an idle open tab", () => {
     ])
       expect(c(k), k).toBeLessThanOrEqual(10);
     expect(c("api/v1/events")).toBeLessThanOrEqual(2);
+    // The connection indicator adds nothing: live, it asks no /healthz of its own.
+    expect(getConnection().state).toBe("live");
+  });
+
+  it("with the stream down, the connection state asks /healthz about once a minute", async () => {
+    const { counts } = rig({ sseUp: false });
+    const app = mountMainHooks();
+    await advance(5 * MIN);
+    // the instance proof (one per minute) and the connection probe (cached 60 s) share the budget
+    expect(counts.get("healthz")).toBeLessThanOrEqual(12);
+    expect(getConnection().state).toBe("reconnecting");
+    app.unmount();
   });
 
   it("makes no duplicate calls when the app mounts", async () => {
