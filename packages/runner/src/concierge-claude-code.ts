@@ -476,7 +476,11 @@ export class ClaudeCodeConcierge implements ConciergeAgent {
       aborted = true;
       requestStop();
     };
-    if (input.signal) input.signal.addEventListener("abort", onAbort, { once: true });
+    if (input.signal) {
+      input.signal.addEventListener("abort", onAbort, { once: true });
+      // An abort during setup has already fired its event: act on it now, or the CLI runs to its timeout.
+      if (input.signal.aborted) onAbort();
+    }
 
     let res: Awaited<ReturnType<typeof execCommand>>;
     try {

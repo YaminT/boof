@@ -49,6 +49,29 @@ describe("TaskStore status index", () => {
     expect((await store.activity(after)).doneSince).toBe(0);
   });
 
+  it("counts a done task by the completion time in the task, not the file mtime, and caches it", async () => {
+    const dir = statusDir(root, "done");
+    await mkdir(dir, { recursive: true });
+    const old = Date.parse("2026-06-04T10:00:00.000Z");
+    await writeFile(join(dir, "old.md"), serializeTask(newTask(fm({ id: "old", status: "done" }))));
+    await writeFile(
+      join(dir, "now.md"),
+      serializeTask(newTask(fm({ id: "now", status: "done", updated: new Date().toISOString() }))),
+    );
+    // Both files were just written (fresh mtime): only the recorded completion time counts.
+    const day = Date.now() - 3_600_000;
+    expect(old).toBeLessThan(day);
+    expect((await store.activity(day)).doneSince).toBe(1);
+    expect((await store.activity(old - 1)).doneSince).toBe(2);
+    // Age the folder past the timestamp tick: the next calls read no files.
+    const aged = new Date(Date.now() - 60_000);
+    await utimes(dir, aged, aged);
+    await store.activity(day);
+    takeTaskFileReads();
+    expect((await store.activity(day)).doneSince).toBe(1);
+    expect(takeTaskFileReads()).toBe(0);
+  });
+
   it("counts by directory and names the running tasks, without reading the files", async () => {
     await store.create(newTask(fm()));
     await store.create(newTask(fm({ id: "t2", status: "done" })));
@@ -360,28 +383,22 @@ describe("task scans at soak scale", () => {
     await writeSoak();
     takeTaskFileReads();
 
-    // GET /api/v1/runner/status counts from the status directories.
-    const statusStarted = performance.now();
+    // GET /api/v1/runner/status counts from the status directories. The read counts, not wall
+    // time, prove it: a time budget is flaky on a loaded machine.
     const summary = await store.statusSummary();
-    const statusMs = performance.now() - statusStarted;
     expect(takeTaskFileReads()).toBe(0);
     expect(summary.counts).toEqual({ running: 1, pending: 399, failed: 6, done: N - 406 });
     expect(summary.running).toEqual(["s0000"]);
-    expect(statusMs).toBeLessThan(5_000);
 
-    // Listing every task, one page of 100 at a time, used to parse every file per page.
-    const listStarted = performance.now();
-    for (let page = 0; page < 21; page++) {
+    // Listing every task, page after page, used to parse every file per page. A few pages show
+    // it: the read count below stays at N however many more there are.
+    for (let page = 0; page < 4; page++) {
       const tasks = await store.list();
       expect(tasks).toHaveLength(N);
     }
-    const listMs = performance.now() - listStarted;
     expect(takeTaskFileReads()).toBe(N);
-    expect(listMs).toBeLessThan(15_000);
 
-    const again = performance.now();
     expect((await store.statusSummary()).counts.done).toBe(N - 406);
-    expect(performance.now() - again).toBeLessThan(5_000);
     expect(takeTaskFileReads()).toBe(0);
   }, 60_000);
 });

@@ -648,6 +648,43 @@ describe("Failover", () => {
     expect(pool.accountList()[0]).toMatchObject({ paused: true, pauseReason: "auth" });
   });
 
+  it("a 401 the key does not repeat on GET /v1/models does not pause the account", async () => {
+    await boot();
+    const auth401 = (res: http.ServerResponse) => {
+      res.writeHead(401, { "content-type": "application/json" });
+      res.end(
+        JSON.stringify({ type: "error", error: { type: "authentication_error", message: "x" } }),
+      );
+    };
+    // The messages request is refused (its shape), the key itself is fine.
+    handler = (q, res) =>
+      q.url === "/v1/models" ? (res.writeHead(200), res.end("{}")) : auth401(res);
+    const r = await call({});
+    expect(r.status).toBe(401);
+    expect(pool.accountList().every((a) => !a.paused)).toBe(true);
+    const check = seen.find((x) => x.url === "/v1/models")!;
+    expect(Object.keys(check.headers).sort()).toEqual(
+      ["accept-encoding", "anthropic-version", "connection", "host", "x-api-key"].sort(),
+    );
+    expect(check.headers["anthropic-version"]).toBe("2023-06-01");
+  });
+
+  it("a hung 401 re-check is bounded by the re-check budget", async () => {
+    await boot({ recheckBudgetMs: 150 });
+    handler = (q, res) => {
+      if (q.url === "/v1/models") return; // never answers
+      res.writeHead(401, { "content-type": "application/json" });
+      res.end(
+        JSON.stringify({ type: "error", error: { type: "authentication_error", message: "x" } }),
+      );
+    };
+    const t0 = Date.now();
+    const r = await call({});
+    expect(Date.now() - t0).toBeLessThan(2000);
+    expect(r.status).toBe(401);
+    expect(pool.accountList().every((a) => !a.paused)).toBe(true);
+  });
+
   it("a credit error marks the account out of credit and fails over", async () => {
     await boot();
     handler = (_q, res, s) => {

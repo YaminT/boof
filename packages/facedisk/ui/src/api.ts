@@ -394,7 +394,15 @@ export const api = {
   runnerStatus: () => http<RunnerStatus>(`${V1}/runner`),
   /** Runner on/off and, per project, what runs now (the topbar). */
   runnerOverview: () =>
-    cachedGet("runner/status", () => http<RunnerOverview>(`${V1}/runner/status`), 2_000),
+    cachedGet(
+      "runner/status",
+      // The browser's offset, so "done today" starts at the owner's midnight.
+      () =>
+        http<RunnerOverview>(
+          `${V1}/runner/status?tzOffsetMinutes=${new Date().getTimezoneOffset()}`,
+        ),
+      2_000,
+    ),
   accountAction: (verb: "pause" | "resume", accountId: string) =>
     http<{ ok: true }>(`${V1}/accounts/${encodeURIComponent(accountId)}/${verb}`, {
       method: "POST",

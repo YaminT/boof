@@ -31,4 +31,24 @@ describe("terminalIo", () => {
     await expect(pending).rejects.toBeInstanceOf(DoctorCancelled);
     vi.restoreAllMocks();
   });
+
+  it("after Ctrl-C every later question and install ends with DoctorCancelled, not ERR_USE_AFTER_CLOSE", async () => {
+    vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    const io = terminalIo();
+    rls.at(-1)?.emit("SIGINT");
+    await expect(io.ask("Again? ")).rejects.toBeInstanceOf(DoctorCancelled);
+    await expect(io.run("npm", ["--version"])).rejects.toBeInstanceOf(DoctorCancelled);
+    vi.restoreAllMocks();
+  });
+
+  it("Ctrl-C while an install runs stops it and the next question is cancelled", async () => {
+    vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    const io = terminalIo();
+    const running = io.run(process.execPath, ["-e", "setTimeout(()=>{},30000)"]);
+    await new Promise((r) => setTimeout(r, 200));
+    rls.at(-1)?.emit("SIGINT");
+    expect(await running).not.toBe(0);
+    await expect(io.ask("Next? ")).rejects.toBeInstanceOf(DoctorCancelled);
+    vi.restoreAllMocks();
+  });
 });

@@ -18,6 +18,7 @@ import { formatRoute } from "../lib/route.js";
 import { planCountsLabel, tasksByPlanHref, type PlanTaskCounts } from "../lib/plan-grouping.js";
 import { planProgress, planStatusTone } from "../lib/plan-view.js";
 import { TonePill } from "../shell/StatusPill.js";
+import { FinishedWorkNote } from "./FinishedWorkNote.js";
 import { ProgressBar } from "./ProgressBar.js";
 
 /** Title, status, progress and the plan's actions: one primary button, the rest in the overflow. */
@@ -130,6 +131,7 @@ export function PlanHeader({
           </a>
         )}
       </div>
+      <FinishedWorkNote goals={plan.goals} />
       {plan.description && (
         <p className="m-0 max-w-[80ch] text-[length:var(--text-body)] text-ink-muted">
           {plan.description}

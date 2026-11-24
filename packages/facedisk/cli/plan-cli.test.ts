@@ -1,7 +1,7 @@
-import { mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import {
   currentStatus,
   parseGoal,
@@ -15,7 +15,7 @@ import {
   buildUnitPrompt,
   selectActionableUnits,
 } from "@boof/heart";
-import { ToolRegistry } from "@boof/runner";
+import { MockTool, ToolRegistry } from "@boof/runner";
 // These integration tests cross into bin; test files are outside the production boundary check.
 import { drainQueue, scanRepoToTasks } from "../../../bin/src/headless.js";
 import { planCommand } from "./plan-cli.js";
@@ -41,20 +41,26 @@ async function writeUnit(dir: string, g: BoofGoal): Promise<void> {
   await writeFile(join(repo, dir, "goal.boof.xml"), serializeGoal(g), "utf8");
 }
 
-beforeEach(async () => {
-  dataRoot = await mkdtemp(join(tmpdir(), "boof-plancli-data-"));
-  repo = await realpath(await mkdtemp(join(tmpdir(), "boof-plancli-repo-")));
+/** The committed repo every test starts from. Built once: five git spawns per test starve under load. */
+let template: string;
+
+async function buildTemplate(): Promise<string> {
+  const dir = await realpath(await mkdtemp(join(tmpdir(), "boof-plancli-template-")));
   const g = (args: string[]) =>
-    execCommand("git", args, { launch: { kind: "direct" }, cwd: repo, timeoutMs: 15000 });
+    execCommand("git", args, { launch: { kind: "direct" }, cwd: dir, timeoutMs: 60_000 });
+  const put = async (rel: string, goal: BoofGoal) => {
+    await mkdir(join(dir, rel), { recursive: true });
+    await writeFile(join(dir, rel, "goal.boof.xml"), serializeGoal(goal), "utf8");
+  };
   await g(["init", "-b", "main"]);
   await g(["config", "user.email", "t@e.com"]);
   await g(["config", "user.name", "T"]);
-  await writeUnit("core", unit("Core"));
-  await writeUnit("api", unit("Api"));
-  await writeUnit("packages/web", unit("Web"));
-  await writeUnit("shipped", unit("Shipped", "done"));
+  await put("core", unit("Core"));
+  await put("api", unit("Api"));
+  await put("packages/web", unit("Web"));
+  await put("shipped", unit("Shipped", "done"));
   await writeFile(
-    join(repo, "plan.boof.xml"),
+    join(dir, "plan.boof.xml"),
     serializePlan({
       goals: [
         { id: "shipped", path: "shipped", order: 1, status: "done", dependsOn: [] },
@@ -67,6 +73,20 @@ beforeEach(async () => {
   );
   await g(["add", "."]);
   await g(["commit", "-m", "init"]);
+  return dir;
+}
+
+beforeAll(async () => {
+  template = await buildTemplate();
+}, 120_000);
+afterAll(async () => {
+  await rm(template, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+});
+
+beforeEach(async () => {
+  dataRoot = await mkdtemp(join(tmpdir(), "boof-plancli-data-"));
+  repo = await realpath(await mkdtemp(join(tmpdir(), "boof-plancli-repo-")));
+  await cp(template, repo, { recursive: true });
 });
 afterEach(async () => {
   await rm(dataRoot, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
@@ -112,7 +132,7 @@ describe("scan on top of plans (golden)", () => {
     "drains in dependency order, records plan history and bumps the repo XML",
     async () => {
       const summary = await scanRepoToTasks({ root: dataRoot, repo, tool: "mock", out: silent });
-      const registry = new ToolRegistry();
+      const registry = new ToolRegistry([new MockTool()]);
       const drained = await drainQueue({ root: dataRoot, registry, out: silent });
       expect(drained).toEqual({ ran: 3, failed: 0 });
       const plan = await new PlanStore(new ProjectStore(dataRoot).dir(summary.projectId!)).require(
@@ -130,7 +150,8 @@ describe("scan on top of plans (golden)", () => {
         ).toBe("done");
       }
     },
-    process.platform === "win32" ? 180_000 : 20_000,
+    // Three pipeline runs; every git call runs the hardening probes too, so it spawns a lot.
+    process.platform === "win32" ? 180_000 : 90_000,
   );
 });
 
