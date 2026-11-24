@@ -104,6 +104,10 @@ const MAX_CACHED_ROOTS = 64;
 const moveCount = new Map<string, number>();
 const moveKey = (root: string) => resolve(root);
 
+let structureEpoch = 0;
+/** Counts creates, moves and deletes of tasks by this process, in every task root. */
+export const taskStructureEpoch = (): number => structureEpoch;
+
 /**
  * Process-local index of one task root. `statusSummary` is the directory listing (status is the
  * directory), remembered until a status directory's mtime changes or this process creates, moves
@@ -807,6 +811,7 @@ export class TaskStore {
       }
     }
     if (structure) {
+      structureEpoch++;
       cache.structureGen += 1;
       cache.summary = undefined;
     }

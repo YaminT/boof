@@ -3,6 +3,7 @@ import { cn } from "../lib/utils.js";
 import type { CardState, HomeCard } from "../lib/home.js";
 import { runningLabel } from "../lib/labels.js";
 import { formatRoute } from "../lib/route.js";
+import { FinishedWorkText } from "../plans/FinishedWorkNote.js";
 
 const CHIP: Record<CardState, string> = {
   "needs-you": "border-attention/50 bg-attention/15 text-ink",
@@ -107,6 +108,7 @@ export function ProjectCard({
           Plan: {card.planTitle}
         </p>
       )}
+      {card.finishedBranch && <FinishedWorkText branch={card.finishedBranch} compact />}
       {card.running.length > 0 && (
         <p
           className="m-0 truncate text-[length:var(--text-row)] text-ink"

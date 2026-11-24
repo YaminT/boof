@@ -1,4 +1,5 @@
 import { Button } from "../ui/button.js";
+import { useRecheckOnOpen } from "../useHarnesses.js";
 import type { HarnessStatus } from "../api-types.js";
 import type { HarnessesState } from "../useHarnesses.js";
 import { useConnection } from "../lib/useConnection.js";
@@ -24,6 +25,7 @@ export function DoctorPage({
   onContinue: () => void;
 }) {
   const { status, loading, failed, denied, refresh } = harnesses;
+  useRecheckOnOpen(harnesses, 0);
   const { state: conn } = useConnection();
   if (denied) {
     return (

@@ -17,7 +17,13 @@ export interface RunnerOverview {
     running: string[];
     counts: Record<string, number>;
     /** The newest active plan; absent from an older server. */
-    plans?: { activeTitle: string | null; goalsDone: number; goalsTotal: number };
+    plans?: {
+      activeTitle: string | null;
+      goalsDone: number;
+      goalsTotal: number;
+      /** The branch that holds a finished plan's work; null while goals remain or none ran. */
+      finishedBranch?: string | null;
+    };
     /** When the task folders last changed (ISO), and tasks finished since local midnight. */
     lastActivity?: string | null;
     /** When a task last moved into `failed` (ISO); absent from an older server. */

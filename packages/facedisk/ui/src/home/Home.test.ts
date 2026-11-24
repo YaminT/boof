@@ -111,3 +111,38 @@ describe("ProjectCard before the overview arrives", () => {
     expect(html).toContain('aria-label="Pause Demo"');
   });
 });
+
+describe("ProjectCard finished-work note", () => {
+  const withPlans = (plans: { goalsDone: number; goalsTotal: number; finishedBranch?: string }) =>
+    homeCards(
+      [project],
+      {
+        enabled: true,
+        budgetExceeded: [],
+        projects: [
+          {
+            id: "demo",
+            paused: false,
+            running: [],
+            counts: { done: 3 },
+            plans: { activeTitle: "Launch", ...plans },
+          },
+        ],
+      },
+      Date.now(),
+    )[0]!;
+
+  it("names the branch and the merge command on the card of a finished plan", () => {
+    const html = render(
+      withPlans({ goalsDone: 2, goalsTotal: 2, finishedBranch: "boof-runner/t9" }),
+    );
+    expect(html).toContain('data-testid="finished-work-note"');
+    expect(html).toContain("<code>boof-runner/t9</code>");
+    expect(html).toContain("<code>git merge boof-runner/t9</code>");
+  });
+
+  it("shows no note while goals remain or when the server sent no branch", () => {
+    expect(render(withPlans({ goalsDone: 1, goalsTotal: 2 }))).not.toContain("finished-work-note");
+    expect(render(withPlans({ goalsDone: 2, goalsTotal: 2 }))).not.toContain("finished-work-note");
+  });
+});

@@ -80,7 +80,7 @@ describe("harnesses.status operation", () => {
     expect(Number.isNaN(Date.parse(out.checkedAt))).toBe(false);
   });
 
-  it("says anyInstalled false when nothing is installed, caches, and refresh is rate-limited", async () => {
+  it("says anyInstalled false when nothing is installed, caches, and refresh always checks again", async () => {
     await setup(fake(false));
     const run = (refresh?: boolean) =>
       getOp("harnesses.status")!.execute(ctx, refresh === undefined ? {} : { refresh }) as Promise<{
@@ -89,8 +89,9 @@ describe("harnesses.status operation", () => {
     expect((await run()).anyInstalled).toBe(false);
     await run();
     expect(checks).toBe(1);
+    // A Re-check seconds after the last check still looks again (an agent may have been installed).
     await run(true);
-    expect(checks).toBe(1);
+    expect(checks).toBe(2);
   });
 
   it("hides the mock tool: it is not an installed agent unless a dev flag is set", async () => {

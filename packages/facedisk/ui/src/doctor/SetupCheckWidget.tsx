@@ -10,7 +10,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { buttonVariants } from "../ui/button.js";
-import type { HarnessesState } from "../useHarnesses.js";
+import { useRecheckOnOpen, type HarnessesState } from "../useHarnesses.js";
 import { doctorView, needsAttention, type DoctorChip } from "../lib/doctor.js";
 import { useConnection } from "../lib/useConnection.js";
 import { formatRoute } from "../lib/route.js";
@@ -82,6 +82,7 @@ export function SetupCheckWidget({
   pid: string | null;
 }) {
   const { status, loading, failed, denied, refresh } = harnesses;
+  useRecheckOnOpen(harnesses, 30_000);
   const { state: conn } = useConnection();
   const [chosen, setChosen] = useState<boolean | null>(null);
   const attention = status ? needsAttention(status) : false;

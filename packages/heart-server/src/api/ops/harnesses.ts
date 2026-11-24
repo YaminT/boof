@@ -8,7 +8,7 @@ export const harnessesStatus = defineOp({
   name: "harnesses.status",
   title: "Installed coding agents",
   description:
-    "Reports which coding-agent tools (harnesses) are installed on the computer that runs boof: for each tool whether it was found, its version and path, and whether it was found off PATH (foundOffPath). Also anyInstalled. Free: it looks for the program and asks it for `--version`; it never sends a prompt. The result is cached for five minutes; `refresh` re-checks (at most once every ten seconds). With `forProject` (a project id), a tool that is installed but cannot start for that project carries startBlock, the reason. Needs settings:read.",
+    "Reports which coding-agent tools (harnesses) are installed on the computer that runs boof: for each tool whether it was found, its version and path, and whether it was found off PATH (foundOffPath). Also anyInstalled. Free: it looks for the program and asks it for `--version`; it never sends a prompt. The result is cached for five minutes; `refresh` always re-checks. With `forProject` (a project id), a tool that is installed but cannot start for that project carries startBlock, the reason. Needs settings:read.",
   scope: "settings:read",
   projectScoped: false,
   input: z.strictObject({ refresh: z.boolean().optional(), forProject: z.string().optional() }),
