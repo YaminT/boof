@@ -2075,7 +2075,7 @@ export class TaskService {
 
   /** Every tool with its install result and readiness: no gateway request, no prompt. */
   private async readyTools(refresh: boolean, projectId?: string, includeHidden = false) {
-    const installs = await this.catalog.installedAll(refresh ? 10_000 : 5 * 60_000);
+    const installs = await this.catalog.installedAll(refresh ? 0 : 5 * 60_000);
     const tools: HarnessStatusResult["tools"] = {};
     let oldest = Date.now();
     const settings = await this.loadSettings();

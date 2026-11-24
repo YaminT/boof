@@ -181,3 +181,18 @@ export function forgetEntry(storage: Pick<Storage, "removeItem">): void {
     /* nothing to forget */
   }
 }
+
+/**
+ * Whether a Doctor view that just opened should ask the server for a fresh check: the answer it
+ * holds is older than `maxAgeMs` (the server may serve one up to five minutes old, and an agent
+ * installed or signed in since then would be missing). No answer yet means one is on its way.
+ */
+export function shouldRecheckOnOpen(
+  status: Pick<HarnessStatus, "checkedAt"> | null,
+  nowMs: number,
+  maxAgeMs: number,
+): boolean {
+  if (!status) return false;
+  const at = Date.parse(status.checkedAt);
+  return !Number.isFinite(at) || nowMs - at > maxAgeMs;
+}

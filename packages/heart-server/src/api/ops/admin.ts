@@ -13,7 +13,7 @@ import { AGENT_KEY_MUST_BE_SEPARATE, OwlishClient } from "@boof/owlish";
 import { defineOp, type OpContext } from "../define-op.js";
 import { OpError } from "../errors.js";
 import { buildModelDetails } from "../services/model-details.js";
-import type { Client } from "@boof/heart";
+import type { Client, Plan } from "@boof/heart";
 import { CommandBody, CreateClientBody } from "../validation.js";
 import {
   CommandRenameSchema,
@@ -395,6 +395,8 @@ export const runnerOverview = defineOp({
           activeTitle: z.string().nullable(),
           goalsDone: z.number().int(),
           goalsTotal: z.number().int(),
+          /** When every goal of that plan is done: the branch that holds the finished work. */
+          finishedBranch: z.string().nullable(),
         }),
         /** When the task folders last changed (ISO), and tasks finished since the caller's midnight. */
         lastActivity: z.string().nullable(),
@@ -424,6 +426,14 @@ export const runnerOverview = defineOp({
   },
 });
 
+/** The branch of the last goal's last task (goals by `order`, then id): the tasks are stacked. */
+export function finishedBranchOf(plan: Pick<Plan, "goals">): string | null {
+  const goals = [...plan.goals].sort((a, b) => a.order - b.order || a.id.localeCompare(b.id));
+  if (goals.length === 0 || goals.some((g) => g.status !== "done")) return null;
+  const branches = goals.map((g) => g.tasks.at(-1)?.branch).filter((b): b is string => !!b);
+  return branches.at(-1) ?? null;
+}
+
 async function computeOverview(ctx: OpContext, input: { tzOffsetMinutes?: number }) {
   const { runner } = await ctx.services.loadSettings();
   const allowed = (pid: string) => authorizeProject(ctx.principal, pid);
@@ -444,6 +454,14 @@ async function computeOverview(ctx: OpContext, input: { tzOffsetMinutes?: number
           const active = plans
             .filter((pl) => pl.status === "active")
             .sort((a, b) => b.updated.localeCompare(a.updated))[0];
+          // Only a plan with every goal done needs its goals read, for the branch of the work.
+          const finishedBranch =
+            active && active.goalCount > 0 && active.doneCount === active.goalCount
+              ? await svc.plans
+                  .get(active.id)
+                  .then(finishedBranchOf)
+                  .catch(() => null)
+              : null;
           return {
             id: p.id,
             paused: p.paused,
@@ -453,6 +471,7 @@ async function computeOverview(ctx: OpContext, input: { tzOffsetMinutes?: number
               activeTitle: active?.title ?? null,
               goalsDone: active?.doneCount ?? 0,
               goalsTotal: active?.goalCount ?? 0,
+              finishedBranch,
             },
             lastActivity:
               activity?.lastActivityMs != null

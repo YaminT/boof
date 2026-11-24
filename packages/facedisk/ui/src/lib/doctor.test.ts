@@ -12,6 +12,7 @@ import {
   gateOf,
   reachableWhileBlocked,
   recallEntry,
+  shouldRecheckOnOpen,
   rememberEntry,
   summarize,
 } from "./doctor.js";
@@ -219,5 +220,15 @@ describe("needsAttention / compactSummary", () => {
     expect(needsAttention(s)).toBe(false);
     expect(needsAttention({ ...s, anyReady: false })).toBe(true);
     expect(compactSummary(s)).toContain("gateway not configured (optional)");
+  });
+});
+
+describe("shouldRecheckOnOpen", () => {
+  const at = (ms: number) => ({ checkedAt: new Date(ms).toISOString() });
+  it("asks again for an answer older than the limit, never for a fresh one or none yet", () => {
+    expect(shouldRecheckOnOpen(at(1_000), 200_000, 30_000)).toBe(true);
+    expect(shouldRecheckOnOpen(at(190_000), 200_000, 30_000)).toBe(false);
+    expect(shouldRecheckOnOpen(null, 200_000, 30_000)).toBe(false);
+    expect(shouldRecheckOnOpen({ checkedAt: "garbage" }, 200_000, 30_000)).toBe(true);
   });
 });

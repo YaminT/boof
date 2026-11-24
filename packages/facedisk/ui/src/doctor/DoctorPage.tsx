@@ -1,4 +1,5 @@
 import { Button } from "../ui/button.js";
+import { useRecheckOnOpen } from "../useHarnesses.js";
 import type { HarnessStatus } from "../api-types.js";
 import type { HarnessesState } from "../useHarnesses.js";
 import { blockReason, summarize } from "../lib/doctor.js";
@@ -23,6 +24,7 @@ export function DoctorPage({
   onContinue: () => void;
 }) {
   const { status, loading, failed, denied, refresh } = harnesses;
+  useRecheckOnOpen(harnesses, 0);
   if (denied) {
     return (
       <Shell>

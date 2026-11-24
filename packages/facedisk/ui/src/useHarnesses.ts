@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api, ApiError } from "./api.js";
 import type { HarnessStatus } from "./api-types.js";
+import { shouldRecheckOnOpen } from "./lib/doctor.js";
 
 export interface HarnessesState {
   /** The last answer; null while the first check is running or when it failed. */
@@ -40,4 +41,19 @@ export function useHarnesses(projectId?: string): HarnessesState {
   }, [attempt, projectId]);
   const refresh = useCallback(() => setAttempt((n) => n + 1), []);
   return { status, loading, failed, denied, refresh };
+}
+
+/**
+ * Once, when a Doctor view opens (and its first answer is in): check again if that answer is older
+ * than `maxAgeMs`. `0` always checks. The server caches installs for minutes, so a card that
+ * opens later would otherwise show what was true when the page first loaded.
+ */
+export function useRecheckOnOpen(state: HarnessesState, maxAgeMs: number): void {
+  const done = useRef(false);
+  const { status, loading, refresh } = state;
+  useEffect(() => {
+    if (done.current || loading) return;
+    done.current = true;
+    if (maxAgeMs === 0 ? true : shouldRecheckOnOpen(status, Date.now(), maxAgeMs)) refresh();
+  }, [status, loading, maxAgeMs, refresh]);
 }

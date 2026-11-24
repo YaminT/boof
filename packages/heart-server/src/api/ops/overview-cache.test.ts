@@ -7,6 +7,7 @@ import { AuthStore, LOCAL_PRINCIPAL } from "@boof/heart";
 import { MockTool, ToolRegistry } from "@boof/runner";
 import type { OpContext } from "../define-op.js";
 import { getOp } from "../registry.js";
+import { finishedBranchOf } from "./admin.js";
 import { TaskService } from "../services/service.js";
 
 let root: string;
@@ -69,5 +70,37 @@ describe("runner.overview cache", () => {
     await expect(overview()).rejects.toThrow();
     await expect(overview()).resolves.toBeDefined();
     expect(spy).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("finishedBranchOf", () => {
+  const goal = (id: string, order: number, status: string, branches: string[]) => ({
+    id,
+    order,
+    status,
+    tasks: branches.map((branch) => ({ branch })),
+  });
+  const plan = (...goals: ReturnType<typeof goal>[]) => ({ goals }) as never;
+
+  it("is the last task branch of the last goal, goals by order then id", () => {
+    expect(
+      finishedBranchOf(
+        plan(
+          goal("b", 2, "done", ["boof-runner/b1", "boof-runner/b2"]),
+          goal("a", 1, "done", ["boof-runner/a1"]),
+        ),
+      ),
+    ).toBe("boof-runner/b2");
+  });
+
+  it("skips a last goal that ran no task, and is null when a goal is open or none ran", () => {
+    expect(
+      finishedBranchOf(plan(goal("a", 1, "done", ["boof-runner/a1"]), goal("b", 2, "done", []))),
+    ).toBe("boof-runner/a1");
+    expect(
+      finishedBranchOf(plan(goal("a", 1, "done", ["x"]), goal("b", 2, "develop", []))),
+    ).toBeNull();
+    expect(finishedBranchOf(plan(goal("a", 1, "done", [])))).toBeNull();
+    expect(finishedBranchOf(plan())).toBeNull();
   });
 });

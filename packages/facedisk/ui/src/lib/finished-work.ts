@@ -22,5 +22,8 @@ export function finishedWork(goals: readonly Goal[]): FinishedWork | null {
     .filter((b): b is string => !!b);
   const branch = branches.at(-1);
   if (!branch) return null;
-  return { branch, branches, mergeCommand: `git merge ${branch}` };
+  return { branch, branches, mergeCommand: mergeCommandFor(branch) };
 }
+
+/** The command that brings the work on `branch` into the branch you are on. */
+export const mergeCommandFor = (branch: string): string => `git merge ${branch}`;

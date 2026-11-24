@@ -171,4 +171,17 @@ describe("ToolRegistry.installedAll", () => {
     await reg.installedAll(0);
     expect(calls).toHaveLength(4);
   });
+
+  it("a forced check is not served by a check that was already running", async () => {
+    const calls: string[] = [];
+    const reg = new ToolRegistry([stubTool("a", calls, { installed: true, message: "ok" })]);
+    const first = reg.installedAll();
+    const forced = reg.installedAll(0);
+    expect(forced).not.toBe(first);
+    await Promise.all([first, forced]);
+    expect(calls).toEqual(["a", "a"]);
+    // A caller that accepts an age still shares the newest check.
+    await reg.installedAll();
+    expect(calls).toHaveLength(2);
+  });
 });

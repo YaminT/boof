@@ -21,6 +21,8 @@ export interface HomeCard {
   progressText: string;
   planTitle: string | null;
   goalsText: string | null;
+  /** The branch that holds the finished work when the plan is done; null otherwise. */
+  finishedBranch: string | null;
   lastActivity: string | null;
   activityText: string | null;
   doneToday: number;
@@ -107,6 +109,7 @@ export function homeCards(
         plans?.activeTitle && plans.goalsTotal > 0
           ? `${plans.goalsDone} of ${plans.goalsTotal} goals done`
           : null,
+      finishedBranch: plans?.finishedBranch ?? null,
       lastActivity: last,
       activityText: when ? (when === "just now" ? "active just now" : `active ${when}`) : null,
       doneToday: row?.doneToday ?? 0,
