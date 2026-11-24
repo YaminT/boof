@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Settings } from "@boof/heart/schema";
 import { api, ApiError, type PlanSummary, type TaskView } from "./api.js";
 import type { BudgetStatus } from "./api-types.js";
+import { reportSignedIn } from "./lib/connection.js";
 import { onUnauthorized, type UnauthorizedReason } from "./token.js";
 import { useLive } from "./useLive.js";
 import { latestGuard } from "./lib/latest.js";
@@ -161,7 +162,10 @@ export function useAppData(
   );
 
   useEffect(() => onUnauthorized((reason) => setNeedsToken(reason)), []);
-  const clearNeedsToken = useCallback(() => setNeedsToken(null), []);
+  const clearNeedsToken = useCallback(() => {
+    setNeedsToken(null);
+    reportSignedIn();
+  }, []);
 
   useEffect(() => {
     void refresh().catch(() => {});

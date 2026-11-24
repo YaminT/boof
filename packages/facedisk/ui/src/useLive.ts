@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { reportStreamDown, reportStreamUp, STREAM_IDLE_MS } from "./lib/connection.js";
 import { invalidateLiveData } from "./lib/request-cache.js";
 import { connectEventStream } from "./sse.js";
 import { authHeaders, getToken, notifyUnauthorized, onTokenChange } from "./token.js";
@@ -45,6 +46,8 @@ function each(fn: (h: LiveHandlers) => void): void {
 function setUp(next: boolean): void {
   if (up === next) return;
   up = next;
+  if (next) reportStreamUp();
+  else reportStreamDown();
   each((h) => h.onStatus?.(next));
 }
 
@@ -54,6 +57,7 @@ function start(): () => void {
   let streamKey: string | undefined;
   return connectEventStream({
     url: EVENTS_URL,
+    idleTimeoutMs: STREAM_IDLE_MS,
     headers: () => {
       streamKey = getToken();
       return authHeaders();
@@ -83,7 +87,11 @@ function start(): () => void {
       if (opened) each((h) => h.onReconnect?.());
       opened = true;
     },
-    onClose: () => setUp(false),
+    onClose: () => {
+      // Every failed attempt asks again; the cached /healthz proof keeps that to one a minute.
+      if (up) setUp(false);
+      else reportStreamDown();
+    },
     onUnauthorized: (sent, reason) => notifyUnauthorized(sent, reason),
     waitForCredentials: (signal) =>
       new Promise((resolve) => {

@@ -12,6 +12,7 @@ import {
 import { buttonVariants } from "../ui/button.js";
 import type { HarnessesState } from "../useHarnesses.js";
 import { doctorView, needsAttention, type DoctorChip } from "../lib/doctor.js";
+import { useConnection } from "../lib/useConnection.js";
 import { formatRoute } from "../lib/route.js";
 import { cn } from "../lib/utils.js";
 import { CheckRows } from "./CheckRows.js";
@@ -62,6 +63,12 @@ function Chip({ chip }: { chip: DoctorChip }) {
   );
 }
 
+const CONNECTION_WORD = {
+  reconnecting: "Checking…",
+  offline: "Offline",
+  "signed-out": "Sign in needed",
+} as const;
+
 /**
  * The Doctor card on the first page: always shown, never blocking. Calm when everything passes (one
  * line and chips); it grows, tints and offers a fix when something needs attention. It reads the
@@ -75,19 +82,23 @@ export function SetupCheckWidget({
   pid: string | null;
 }) {
   const { status, loading, failed, denied, refresh } = harnesses;
+  const { state: conn } = useConnection();
   const [chosen, setChosen] = useState<boolean | null>(null);
   const attention = status ? needsAttention(status) : false;
   const open = chosen ?? attention;
   const view = status ? doctorView(status, pid) : null;
   const tone = view ? view.tone : denied ? "warn" : failed ? "fail" : "loading";
   const Icon = ICON[tone];
+  const offline = failed && !denied && conn !== "live";
   const headline = view
     ? view.headline
     : denied
       ? "This key cannot read the Doctor"
-      : failed
-        ? "Could not run the checks"
-        : "Checking…";
+      : offline
+        ? CONNECTION_WORD[conn as keyof typeof CONNECTION_WORD]
+        : failed
+          ? "Could not run the checks"
+          : "Checking…";
   const summary = view
     ? view.summary
     : denied
