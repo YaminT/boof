@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { DoctorCheck, HarnessStatus } from "../api-types.js";
 import type { HarnessesState } from "../useHarnesses.js";
+import { CheckRows } from "./CheckRows.js";
 import { SetupCheckWidget } from "./SetupCheckWidget.js";
 
 const check = (over: Partial<DoctorCheck>): DoctorCheck => ({
@@ -116,5 +117,14 @@ describe("SetupCheckWidget", () => {
   it("failed and denied answers say so", () => {
     expect(html2({ failed: true })).toContain("Could not run the checks");
     expect(html2({ failed: true, denied: true })).toContain("This key cannot read the Doctor");
+  });
+
+  it("details: the optional gateway row is muted, not a warning, and keeps its link", () => {
+    const out = renderToStaticMarkup(
+      createElement(CheckRows, { status: status(true, [check({}), gatewayAbsent]), pid: "alpha" }),
+    );
+    expect(out).toContain("optional — not set up");
+    expect(out).not.toContain("! warning");
+    expect(out).toContain("<a ");
   });
 });

@@ -57,7 +57,7 @@ export function DoctorPage({
                 : "All set: an agent is ready"
               : (reason ?? "Cannot run tasks yet")}
           </p>
-          <CheckRows checks={status.checks} pid={pid} />
+          <CheckRows status={status} pid={pid} />
           <HarnessPanel
             status={status as HarnessStatus}
             loading={loading}

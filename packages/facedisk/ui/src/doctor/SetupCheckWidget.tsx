@@ -183,7 +183,7 @@ export function SetupCheckWidget({
       {status && open && (
         <div className="animate-in fade-in slide-in-from-top-1 duration-200 min-[720px]:pl-11">
           <div className="rounded-lg bg-surface p-3 text-ink">
-            <CheckRows checks={status.checks} pid={pid} />
+            <CheckRows status={status} pid={pid} />
           </div>
         </div>
       )}

@@ -3,6 +3,7 @@ import type { DoctorCheck, HarnessStatus } from "../api-types.js";
 import {
   blockReason,
   compactSummary,
+  doctorView,
   afterSignIn,
   continueRoute,
   hintParts,
@@ -219,5 +220,22 @@ describe("needsAttention / compactSummary", () => {
     expect(needsAttention(s)).toBe(false);
     expect(needsAttention({ ...s, anyReady: false })).toBe(true);
     expect(compactSummary(s)).toContain("gateway not configured (optional)");
+  });
+
+  it("counts the chips: the optional gateway is neither passed nor failed", () => {
+    const s: HarnessStatus = {
+      ...status(true),
+      tools: {
+        a: { displayName: "A", installed: true, message: "", ready: true, readyReason: "" },
+        b: { displayName: "B", installed: true, message: "", ready: true, readyReason: "" },
+      },
+      checks: [
+        { id: "git", label: "git", status: "pass", message: "ok" },
+        { id: "gateway", label: "g", status: "warn", message: "Not configured." },
+      ],
+    };
+    expect(doctorView(s, null).summary).toBe(
+      "2 agents ready · 3 of 3 required checks passed · 1 optional not set up",
+    );
   });
 });

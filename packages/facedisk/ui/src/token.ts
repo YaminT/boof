@@ -1,5 +1,5 @@
-// API key handling for the browser UI. The key lives in sessionStorage only
-// (per tab, never localStorage) and is sent as an Authorization header, never in a URL.
+// API key handling for the browser UI. The key lives in sessionStorage (per tab) unless the user
+// ticks "Remember on this device", which keeps it in localStorage too. It is sent as an Authorization header, never in a URL.
 // The desktop app injects its own key through the preload bridge.
 
 import { createUnauthorizedGate, type UnauthorizedVerdict } from "./lib/unauthorized-gate.js";
@@ -20,6 +20,36 @@ function store(): Storage | undefined {
   }
 }
 
+function local(): Storage | undefined {
+  try {
+    return globalThis.localStorage;
+  } catch {
+    return undefined;
+  }
+}
+
+/** The store holding the saved key: this tab's, else the remembered one on this device. */
+function keyStore(): Storage | undefined {
+  try {
+    const s = store();
+    if (s?.getItem(KEY)) return s;
+    const l = local();
+    if (l?.getItem(KEY)) return l;
+  } catch {
+    /* fall through */
+  }
+  return store();
+}
+
+/** True when the saved key is kept on this device (localStorage). */
+export function isKeyRemembered(): boolean {
+  try {
+    return !!local()?.getItem(KEY);
+  } catch {
+    return false;
+  }
+}
+
 function desktopToken(): string | undefined {
   const w = (globalThis as { boofRunnerDesktop?: { token?: string } }).boofRunnerDesktop;
   return w?.token || undefined;
@@ -27,25 +57,49 @@ function desktopToken(): string | undefined {
 
 export function getToken(): string | undefined {
   try {
-    return desktopToken() ?? (store()?.getItem(KEY) || undefined);
+    return desktopToken() ?? (keyStore()?.getItem(KEY) || undefined);
   } catch {
     return undefined;
   }
 }
 
-export function setToken(token: string): void {
+export function setToken(token: string, remember = false): void {
   gateOpen = false; // a new key may be refused again: that 401 reopens the gate
   authBlocked = false;
   keyEnteredThisPage = true;
   try {
-    const s = store();
     // The new key is not bound yet. The next successful response binds it to that server.
-    s?.removeItem(INSTANCE_KEY);
-    s?.setItem(KEY, token.trim());
+    removeSaved();
+    let saved = false;
+    if (remember) {
+      try {
+        const l = local();
+        if (l) {
+          l.setItem(KEY, token.trim());
+          saved = true;
+        }
+      } catch {
+        /* localStorage blocked: keep the key for this tab instead */
+      }
+    }
+    if (!saved) store()?.setItem(KEY, token.trim());
   } catch {
-    /* sessionStorage unavailable: the key lasts until reload via callers' state */
+    /* storage unavailable or blocked: the key lasts until reload via callers' state */
   }
   for (const fn of [...tokenListeners]) fn();
+}
+
+/** Remove the key and its instance binding from both stores; each store is tried on its own. */
+function removeSaved(): void {
+  for (const get of [store, local]) {
+    try {
+      const s = get();
+      s?.removeItem(KEY);
+      s?.removeItem(INSTANCE_KEY);
+    } catch {
+      /* this store is blocked */
+    }
+  }
 }
 
 const tokenListeners = new Set<() => void>();
@@ -59,19 +113,13 @@ export function onTokenChange(fn: () => void): () => void {
 export function clearToken(): void {
   authBlocked = false;
   keyEnteredThisPage = false;
-  try {
-    const s = store();
-    s?.removeItem(KEY);
-    s?.removeItem(INSTANCE_KEY);
-  } catch {
-    /* ignore */
-  }
+  removeSaved();
 }
 
 /** The instance id this page's saved key is bound to, if it has been learned. */
 export function getBoundInstance(): string | undefined {
   try {
-    return store()?.getItem(INSTANCE_KEY) || undefined;
+    return keyStore()?.getItem(INSTANCE_KEY) || undefined;
   } catch {
     return undefined;
   }
@@ -80,7 +128,7 @@ export function getBoundInstance(): string | undefined {
 /** Remember the server instance a successful authenticated response named. */
 export function bindInstance(id: string): void {
   try {
-    store()?.setItem(INSTANCE_KEY, id);
+    keyStore()?.setItem(INSTANCE_KEY, id);
   } catch {
     /* ignore */
   }
@@ -101,13 +149,7 @@ export function keyWasEnteredThisPage(): boolean {
 export function blockSavedKey(): void {
   authBlocked = true;
   keyEnteredThisPage = false;
-  try {
-    const s = store();
-    s?.removeItem(KEY);
-    s?.removeItem(INSTANCE_KEY);
-  } catch {
-    /* ignore */
-  }
+  removeSaved();
 }
 
 /**
@@ -118,7 +160,7 @@ export function blockSavedKey(): void {
 export function discardUnboundSavedKey(): boolean {
   if (keyEnteredThisPage || authBlocked || getBoundInstance()) return false;
   try {
-    const s = store();
+    const s = keyStore();
     if (!s?.getItem(KEY)) return false;
     s.removeItem(KEY);
     return true;

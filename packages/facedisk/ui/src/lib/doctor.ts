@@ -160,7 +160,9 @@ export function doctorView(status: HarnessStatus, pid: string | null): DoctorVie
   const attention = needsAttention(status);
   const problem = status.checks.find((c) => c.status !== "pass" && !isOptionalMissing(status, c));
   const ready = Object.values(status.tools).filter((t) => t.ready).length;
-  const passed = status.checks.filter((c) => c.status === "pass").length;
+  const required = chips.filter((c) => c.tone !== "optional");
+  const passed = required.filter((c) => c.tone === "ok").length;
+  const optionalOff = chips.length - required.length;
   const tone = blocked ? "fail" : attention ? "warn" : "ok";
   return {
     tone,
@@ -169,7 +171,7 @@ export function doctorView(status: HarnessStatus, pid: string | null): DoctorVie
       : attention
         ? `Needs attention: ${problem?.label ?? "a check"}`
         : "Everything is ready",
-    summary: `${ready} agent${ready === 1 ? "" : "s"} ready · ${passed} of ${status.checks.length} checks passed`,
+    summary: `${ready} agent${ready === 1 ? "" : "s"} ready · ${passed} of ${required.length} required checks passed${optionalOff ? ` · ${optionalOff} optional not set up` : ""}`,
     chips,
     fix: problem ? fixRoute(problem.fixPage, pid) : null,
   };
