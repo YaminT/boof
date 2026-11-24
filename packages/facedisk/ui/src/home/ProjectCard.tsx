@@ -25,6 +25,7 @@ export function ProjectCard({
   paused,
   busy,
   onTogglePause,
+  progressPending = false,
 }: {
   card: HomeCard;
   /** Title of the first running task, when known. */
@@ -32,6 +33,8 @@ export function ProjectCard({
   paused: boolean;
   busy: boolean;
   onTogglePause: () => void;
+  /** The runner overview has not arrived yet: show the card with a placeholder for progress. */
+  progressPending?: boolean;
 }) {
   const { project } = card;
   const overview = formatRoute({ name: "overview", pid: project.id });
@@ -60,29 +63,42 @@ export function ProjectCard({
             CHIP[card.state],
           )}
         >
-          {card.stateLabel}
+          {progressPending ? "Loading…" : card.stateLabel}
         </span>
       </div>
       <p className="m-0 truncate text-[length:var(--text-meta)] text-ink-muted" title={brief}>
         {brief}
       </p>
-      <div className="mt-1 flex flex-col gap-1">
+      {progressPending ? (
         <div
-          role="progressbar"
-          aria-label={`${project.name} progress`}
-          aria-valuemin={0}
-          aria-valuemax={100}
-          aria-valuenow={card.percent}
-          aria-valuetext={card.progressText}
-          className="h-2 overflow-hidden rounded-full bg-line"
+          data-testid="card-progress-pending"
+          aria-hidden
+          className="mt-1 flex animate-pulse flex-col gap-2"
         >
-          <div className="h-full rounded-full bg-done" style={{ width: `${card.percent}%` }} />
+          <div className="h-2 rounded-full bg-line" />
+          <div className="h-3 w-1/3 rounded bg-line" />
         </div>
-        <div className="flex items-baseline justify-between gap-2 text-[length:var(--text-row)]">
-          <span className="text-ink">{card.progressText}</span>
-          {card.goalsText && <span className="text-ink-muted tabular-nums">{card.goalsText}</span>}
+      ) : (
+        <div className="mt-1 flex flex-col gap-1">
+          <div
+            role="progressbar"
+            aria-label={`${project.name} progress`}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={card.percent}
+            aria-valuetext={card.progressText}
+            className="h-2 overflow-hidden rounded-full bg-line"
+          >
+            <div className="h-full rounded-full bg-done" style={{ width: `${card.percent}%` }} />
+          </div>
+          <div className="flex items-baseline justify-between gap-2 text-[length:var(--text-row)]">
+            <span className="text-ink">{card.progressText}</span>
+            {card.goalsText && (
+              <span className="text-ink-muted tabular-nums">{card.goalsText}</span>
+            )}
+          </div>
         </div>
-      </div>
+      )}
       {card.planTitle && (
         <p
           className="m-0 truncate text-[length:var(--text-meta)] text-ink-muted"
@@ -102,7 +118,7 @@ export function ProjectCard({
       )}
       <div className="mt-auto flex items-center gap-2 pt-1">
         <span className="min-w-0 flex-1 truncate text-[length:var(--text-meta)] text-ink-muted">
-          {card.activityText ?? "No activity yet"}
+          {progressPending ? "" : (card.activityText ?? "No activity yet")}
         </span>
         <a href={overview} className={ICON_BUTTON} aria-label={`Open ${project.name}`} title="Open">
           <FolderOpenIcon aria-hidden />

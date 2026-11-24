@@ -99,3 +99,15 @@ describe("ProjectCard", () => {
     expect(html).toContain("min-h-[176px]");
   });
 });
+
+describe("ProjectCard before the overview arrives", () => {
+  it("shows the project with a progress placeholder, not a bare skeleton", () => {
+    const html = render(card({}), { progressPending: true });
+    expect(html).toContain("Demo");
+    expect(html).toContain('data-testid="card-progress-pending"');
+    expect(html).toContain("Loading…");
+    expect(html).not.toContain("No tasks yet");
+    expect(html).not.toContain('role="progressbar"');
+    expect(html).toContain('aria-label="Pause Demo"');
+  });
+});
