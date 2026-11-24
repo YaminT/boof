@@ -1,3 +1,4 @@
+import { agentsReadyText } from "@boof/heart/agent-count";
 import type { DoctorCheck, DoctorFixPage, HarnessStatus } from "../api-types.js";
 import { formatRoute, hasPid, parseRoute, type Route, type SettingsPageId } from "./route.js";
 
@@ -159,7 +160,6 @@ export function doctorView(status: HarnessStatus, pid: string | null): DoctorVie
   const blocked = blockReason(status) !== null;
   const attention = needsAttention(status);
   const problem = status.checks.find((c) => c.status !== "pass" && !isOptionalMissing(status, c));
-  const ready = Object.values(status.tools).filter((t) => t.ready).length;
   const required = chips.filter((c) => c.tone !== "optional");
   const passed = required.filter((c) => c.tone === "ok").length;
   const optionalOff = chips.length - required.length;
@@ -171,7 +171,7 @@ export function doctorView(status: HarnessStatus, pid: string | null): DoctorVie
       : attention
         ? `Needs attention: ${problem?.label ?? "a check"}`
         : "Everything is ready",
-    summary: `${ready} agent${ready === 1 ? "" : "s"} ready · ${passed} of ${required.length} required checks passed${optionalOff ? ` · ${optionalOff} optional not set up` : ""}`,
+    summary: `${agentsReadyText(status.tools)} · ${passed} of ${required.length} required checks passed${optionalOff ? ` · ${optionalOff} optional not set up` : ""}`,
     chips,
     fix: problem ? fixRoute(problem.fixPage, pid) : null,
   };
@@ -179,10 +179,9 @@ export function doctorView(status: HarnessStatus, pid: string | null): DoctorVie
 
 /** The one-line summary of a passing setup. */
 export function compactSummary(status: HarnessStatus): string {
-  const n = Object.values(status.tools).filter((t) => t.ready).length;
   const gw = status.checks.find((c) => c.id === "gateway");
   const gateway = !gw || gw.status === "pass" ? "gateway OK" : "gateway not configured (optional)";
-  return `Doctor: OK · ${n} agent${n === 1 ? "" : "s"} ready · ${gateway}`;
+  return `Doctor: OK · ${agentsReadyText(status.tools)} · ${gateway}`;
 }
 
 const FIX_PAGE: Record<DoctorFixPage, SettingsPageId> = {

@@ -119,6 +119,7 @@ import type { CreateProjectBodyInput } from "../validation.js";
 import { statusDowngraded, subtasksOpen, type Warning } from "../warnings.js";
 import { PlanService } from "./plan-service.js";
 import type { ConciergeService } from "../../concierge/service.js";
+import { countReadyAgents } from "@boof/heart/agent-count";
 import type { ConciergeAgent } from "@boof/heart";
 import { cleanN8nName } from "../../n8n/text.js";
 
@@ -2142,7 +2143,7 @@ export class TaskService {
   ): Promise<DoctorCheck[]> {
     if (!this.gitCheckCache || refresh || Date.now() - this.gitCheckCache.at > 5 * 60_000)
       this.gitCheckCache = { at: Date.now(), value: await gitCheck() };
-    const ready = Object.values(tools).filter((t) => t.ready).length;
+    const ready = countReadyAgents(tools);
     const firstBlocked = Object.values(tools).find((t) => !t.ready);
     const agents: DoctorCheck = anyReady
       ? { id: "agents", label: "Coding agents", status: "pass", message: `${ready} ready` }

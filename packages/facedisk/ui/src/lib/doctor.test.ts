@@ -241,6 +241,21 @@ describe("needsAttention / compactSummary", () => {
   });
 });
 
+describe("agent count", () => {
+  it("the card and the compact line count every ready tool, as the CLI does", () => {
+    const s = {
+      ...status(true),
+      tools: {
+        "claude-code": { ready: true },
+        codex: { ready: true },
+        "claude-agent": { ready: false },
+      },
+    } as unknown as HarnessStatus;
+    expect(doctorView(s, null).summary).toContain("2 agents ready");
+    expect(compactSummary(s)).toContain("2 agents ready");
+  });
+});
+
 describe("shouldRecheckOnOpen", () => {
   const at = (ms: number) => ({ checkedAt: new Date(ms).toISOString() });
   it("asks again for an answer older than the limit, never for a fresh one or none yet", () => {
