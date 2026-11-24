@@ -32,7 +32,8 @@ async function extraRepo(label: string): Promise<string> {
   await initGitRepo(dir);
   return dir;
 }
-const registry = () => new ToolRegistry();
+// Only the mock tool: the default registry probes the real claude, codex and opencode binaries.
+const registry = () => new ToolRegistry([new MockTool()]);
 const silent = () => {};
 
 function goalXml(goal: string, status: string): string {
