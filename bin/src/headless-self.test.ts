@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { defaultSettings, execCommand, SettingsStore } from "@boof/heart";
-import { ToolRegistry, resetMock } from "@boof/runner";
+import { MockTool, ToolRegistry, resetMock } from "@boof/runner";
 
 const { transportArgs } = vi.hoisted(() => ({
   transportArgs: [] as { via: string; isSelfUrl: (u: URL) => boolean }[],
@@ -81,7 +81,7 @@ describe("headless self check wiring", () => {
       prompt: "Build a widget.",
       repo,
       tool: "mock",
-      registry: new ToolRegistry(),
+      registry: new ToolRegistry([new MockTool()]),
       out: () => {},
     });
     expect(transportArgs).toHaveLength(1);
@@ -92,7 +92,11 @@ describe("headless self check wiring", () => {
   it("drainQueue hands the transport a real self check", async () => {
     process.env.BOOF_RUNNER_PORT = "4400";
     await configure();
-    await drainQueue({ root: dataRoot, registry: new ToolRegistry(), out: () => {} });
+    await drainQueue({
+      root: dataRoot,
+      registry: new ToolRegistry([new MockTool()]),
+      out: () => {},
+    });
     expect(transportArgs).toHaveLength(1);
     expect(transportArgs[0]!.via).toBe("runner");
     expectRealSelfCheck(transportArgs[0]!.isSelfUrl);

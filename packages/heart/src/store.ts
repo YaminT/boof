@@ -104,6 +104,10 @@ const MAX_CACHED_ROOTS = 64;
 const moveCount = new Map<string, number>();
 const moveKey = (root: string) => resolve(root);
 
+let structureEpoch = 0;
+/** Counts creates, moves and deletes of tasks by this process, in every task root. */
+export const taskStructureEpoch = (): number => structureEpoch;
+
 /**
  * Process-local index of one task root. `statusSummary` is the directory listing (status is the
  * directory), remembered until a status directory's mtime changes or this process creates, moves
@@ -130,6 +134,8 @@ interface RootCache {
    * to existing names.
    */
   statusLists?: Map<Status, StatusListCache>;
+  /** Completion time (the task's `updated`) of each file in `done/`, valid for one directory mtime. */
+  doneTimes?: { mtimeNs: bigint; byName: Map<string, number> };
 }
 
 interface StatusListEntry {
@@ -635,28 +641,56 @@ export class TaskStore {
   }
 
   /**
-   * When the task folders last changed (a task moved in or out) and how many tasks finished since
-   * `sinceMs`. Directory mtimes only: the done folder is listed just when it changed since then.
+   * When the task folders last changed (a task moved in or out), when a task last moved into
+   * `failed`, and how many tasks finished since `sinceMs`. A task's finish time is the `updated`
+   * it recorded when it moved to `done`, not the file's mtime. The done folder is read only when
+   * its mtime changed, and only the names not seen before; the counting itself is in memory.
    */
-  async activity(sinceMs: number): Promise<{ lastActivityMs: number | null; doneSince: number }> {
+  async activity(
+    sinceMs: number,
+  ): Promise<{ lastActivityMs: number | null; lastFailedMs: number | null; doneSince: number }> {
     let last = 0n;
     for (const status of ALL_STATUSES) {
       const m = await this.statusDirMtime(status);
       if (m > last) last = m;
     }
+    const failed = await this.statusDirMtime("failed");
     let doneSince = 0;
-    const doneMtimeMs = Number((await this.statusDirMtime("done")) / 1_000_000n);
-    if (doneMtimeMs >= sinceMs) {
-      const dir = statusDir(this.root, "done");
-      for (const name of await listMdFiles(dir)) {
-        try {
-          if ((await stat(join(dir, name))).mtimeMs >= sinceMs) doneSince++;
-        } catch (err) {
-          if (!isNotFound(err)) throw err;
-        }
+    const doneMtime = await this.statusDirMtime("done");
+    if (Number(doneMtime / 1_000_000n) >= sinceMs) {
+      const times = await this.doneTimes(doneMtime);
+      for (const at of times.values()) if (at >= sinceMs) doneSince++;
+    }
+    return {
+      lastActivityMs: last === 0n ? null : Number(last / 1_000_000n),
+      lastFailedMs: failed === 0n ? null : Number(failed / 1_000_000n),
+      doneSince,
+    };
+  }
+
+  private async doneTimes(mtimeNs: bigint): Promise<Map<string, number>> {
+    const cache = cacheFor(this.root);
+    const hit = cache.doneTimes;
+    if (hit && hit.mtimeNs === mtimeNs) return hit.byName;
+    const dir = statusDir(this.root, "done");
+    const byName = new Map<string, number>();
+    for (const name of await listMdFiles(dir)) {
+      const known = hit?.byName.get(name);
+      if (known !== undefined) {
+        byName.set(name, known);
+        continue;
+      }
+      try {
+        const got = await this.cachedTask("done", name, join(dir, name));
+        const at = got ? Date.parse(got.task.frontmatter.updated) : NaN;
+        if (Number.isFinite(at)) byName.set(name, at);
+      } catch (err) {
+        if (!isNotFound(err)) throw err;
       }
     }
-    return { lastActivityMs: last === 0n ? null : Number(last / 1_000_000n), doneSince };
+    // A directory changed within the last timestamp tick can change again without a new mtime.
+    if (Date.now() - Number(mtimeNs / 1_000_000n) > 2_000) cache.doneTimes = { mtimeNs, byName };
+    return byName;
   }
 
   private async statusDirMtime(status: Status): Promise<bigint> {
@@ -777,6 +811,7 @@ export class TaskStore {
       }
     }
     if (structure) {
+      structureEpoch++;
       cache.structureGen += 1;
       cache.summary = undefined;
     }

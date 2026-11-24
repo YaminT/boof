@@ -27,6 +27,7 @@ import { doctorCommand } from "./doctor-cli.js";
 import { backupCommand, restoreCommand } from "@boof/facedisk/cli/backup-cli.js";
 import { drainQueue, runTask, scanRepoToTasks } from "./headless.js";
 import type { ConciergeAgent } from "@boof/heart";
+import { runnerBanner } from "./runner-banner.js";
 import {
   AuthStore,
   BrowserSessionStore,
@@ -385,9 +386,15 @@ export async function serve(argv: string[]): Promise<void> {
           console.log(line);
       },
       onRunner: (engine) => {
-        if (engine) console.log("Runner:  started (toggle on/off in the UI)");
-        else if (!args.noRunner)
-          console.log("Runner:  already running in another process — not starting a second one");
+        void (async () => {
+          const enabled = (await new SettingsStore(root).load()).runner.enabled;
+          const line = runnerBanner({
+            engine: engine !== null,
+            enabled,
+            noRunner: !!args.noRunner,
+          });
+          if (line) console.log(line);
+        })();
       },
     });
     stop = async () => {

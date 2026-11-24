@@ -1,5 +1,5 @@
 import { agentsReadyText } from "@boof/heart/agent-count";
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { chmod, mkdir, realpath, stat } from "node:fs/promises";
 import { createInterface } from "node:readline";
 import { Writable } from "node:stream";
@@ -163,9 +163,15 @@ export function terminalIo(): DoctorIo {
   // historySize 0: readline's history would bring a hidden answer (a key) back with the Up arrow.
   const rl = createInterface({ input: process.stdin, output, terminal: true, historySize: 0 });
   let cancel: (() => void) | undefined;
+  // Once the interface is closed (Ctrl-C, Ctrl-D) readline throws on a new question: end it ourselves.
+  let closed = false;
+  let child: ChildProcess | undefined;
   const onCancel = () => {
+    closed = true;
     muted = false;
     cancel?.();
+    // Ctrl-C while an install runs: stop it, so the doctor ends instead of carrying on.
+    child?.kill("SIGINT");
   };
   rl.on("SIGINT", () => {
     process.stdout.write("\n");
@@ -178,6 +184,7 @@ export function terminalIo(): DoctorIo {
     err: (l) => console.error(l),
     ask: (question, opts) =>
       new Promise<string>((done, fail) => {
+        if (closed) return fail(new DoctorCancelled());
         cancel = () => fail(new DoctorCancelled());
         process.stdout.write(question);
         muted = opts?.hidden === true;
@@ -189,17 +196,23 @@ export function terminalIo(): DoctorIo {
         });
       }),
     run: (command, args) =>
-      new Promise<number>((done) => {
+      new Promise<number>((done, fail) => {
+        if (closed) return fail(new DoctorCancelled());
         const n = npmSpawn(command);
         try {
-          const child = spawn(n.command, [...args], { stdio: "inherit", shell: n.shell });
-          child.on("error", () => done(127));
-          child.on("close", (code) => done(code ?? 1));
+          const c = spawn(n.command, [...args], { stdio: "inherit", shell: n.shell });
+          child = c;
+          c.on("error", () => done(127));
+          c.on("close", (code) => {
+            if (child === c) child = undefined;
+            done(code ?? 1);
+          });
         } catch {
           done(127);
         }
       }),
     close: () => {
+      closed = true;
       rl.off("close", onCancel);
       rl.close();
     },

@@ -31,11 +31,21 @@ jobs:
         run: npm run typecheck
 
       - name: Test
-        run: npx vitest run
+        run: npx vitest run --reporter=default --reporter=json --outputFile.json=vitest-report.json
+
+      - name: Slowest tests
+        if: always()
+        run: node .github/scripts/vitest-slowest.mjs vitest-report.json
 
   windows-tests:
-    name: Windows unit suite
+    # Windows spawns git and child processes several times slower than Linux, so the suite is split
+    # across four runners: one run took about 30 minutes.
+    name: Windows unit suite (${{ matrix.shard }}/4)
     runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -57,7 +67,11 @@ jobs:
         run: npm run typecheck
 
       - name: Test
-        run: npx vitest run
+        run: npx vitest run --shard=${{ matrix.shard }}/4 --reporter=default --reporter=json --outputFile.json=vitest-report.json
+
+      - name: Slowest tests
+        if: always()
+        run: node .github/scripts/vitest-slowest.mjs vitest-report.json
 
   check:
     runs-on: ubuntu-latest
@@ -91,7 +105,11 @@ jobs:
       - name: Test
         env:
           BOOF_REQUIRE_SANDBOX: "1"
-        run: npm test
+        run: npx vitest run --reporter=default --reporter=json --outputFile.json=vitest-report.json
+
+      - name: Slowest tests
+        if: always()
+        run: node .github/scripts/vitest-slowest.mjs vitest-report.json
 
       - name: Lint
         run: npm run lint

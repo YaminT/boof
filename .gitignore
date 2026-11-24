@@ -33,3 +33,4 @@ AGENTS.md
 
 # Desktop start-smoke logs (uploaded by desktop-smoke.yml on failure)
 .desktop-smoke/
+vitest-report.json

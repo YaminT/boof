@@ -21,6 +21,8 @@ export interface HomeCard {
   progressText: string;
   planTitle: string | null;
   goalsText: string | null;
+  /** The branch that holds the finished work when the plan is done; null otherwise. */
+  finishedBranch: string | null;
   lastActivity: string | null;
   activityText: string | null;
   doneToday: number;
@@ -43,7 +45,13 @@ export function progressOf(counts: Record<string, number>): {
   return { done, total, percent, text };
 }
 
-export function stateOf(row: Pick<OverviewProject, "paused" | "running" | "counts"> | undefined): {
+/** A failure counts as blocking for this long after the task failed. */
+export const FAILURE_BLOCKS_MS = 24 * 3_600_000;
+
+export function stateOf(
+  row: Pick<OverviewProject, "paused" | "running" | "counts" | "lastFailure"> | undefined,
+  now: number = Date.now(),
+): {
   state: CardState;
   label: string;
 } {
@@ -51,7 +59,12 @@ export function stateOf(row: Pick<OverviewProject, "paused" | "running" | "count
   const needs = n(row.counts, "action");
   if (needs > 0) return { state: "needs-you", label: `Needs you: ${needs}` };
   if (row.running.length > 0) return { state: "running", label: "Running" };
-  if (n(row.counts, "failed") > 0 && !row.paused) return { state: "blocked", label: "Blocked" };
+  // Blocked: a failure that is still current and nothing queued to carry on. An old failed task
+  // left in the folder, or one the runner has queued work past, is not a block.
+  const failedAt = row.lastFailure ? Date.parse(row.lastFailure) : NaN;
+  const current = row.lastFailure === undefined || !(now - failedAt > FAILURE_BLOCKS_MS);
+  if (n(row.counts, "failed") > 0 && n(row.counts, "pending") === 0 && current && !row.paused)
+    return { state: "blocked", label: "Blocked" };
   if (row.paused) return { state: "paused", label: "Paused" };
   return { state: "idle", label: "Idle" };
 }
@@ -75,7 +88,7 @@ export function homeCards(
     const counts = row?.counts ?? {};
     const { state, label } = project.archived
       ? { state: "idle" as const, label: "Archived" }
-      : stateOf(row);
+      : stateOf(row, now);
     const progress = progressOf(counts);
     const plans = row?.plans;
     const last = row?.lastActivity ?? null;
@@ -94,8 +107,9 @@ export function homeCards(
       planTitle: plans?.activeTitle ?? null,
       goalsText:
         plans?.activeTitle && plans.goalsTotal > 0
-          ? `goals ${plans.goalsDone}/${plans.goalsTotal}`
+          ? `${plans.goalsDone} of ${plans.goalsTotal} goals done`
           : null,
+      finishedBranch: plans?.finishedBranch ?? null,
       lastActivity: last,
       activityText: when ? (when === "just now" ? "active just now" : `active ${when}`) : null,
       doneToday: row?.doneToday ?? 0,

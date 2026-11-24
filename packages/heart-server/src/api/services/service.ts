@@ -110,6 +110,8 @@ import {
   type HealthResult,
   type InstallResult,
   type ToolCatalog,
+  taskStructureEpoch,
+  execCommand,
 } from "@boof/heart";
 import { checkedWorktreeGit, loadWorktreeRecord } from "@boof/runner";
 import { OpError } from "../errors.js";
@@ -945,6 +947,8 @@ export class TaskService {
       authStore?: AuthStore;
       refreshSandbox?: (settings: Settings) => Promise<void>;
       assessSandbox?: () => Promise<{ ok: boolean; reason: string }>;
+      /** Whether claude-code is signed in (null: could not tell). Tests pass a fake. */
+      claudeAuthProbe?: (path: string) => Promise<boolean | null>;
     } = {},
   ) {
     this.projects = new ProjectStore(root, { isGitRepo, repoCommonDir, initGitRepo });
@@ -962,6 +966,25 @@ export class TaskService {
     this.authStore = opts.authStore ?? new AuthStore(root);
     this.refreshSandboxHook = opts.refreshSandbox;
     this.assessSandboxHook = opts.assessSandbox;
+    this.claudeAuthProbe = opts.claudeAuthProbe ?? probeClaudeAuth;
+  }
+
+  private readonly claudeAuthProbe: (path: string) => Promise<boolean | null>;
+  private claudeAuthCache?: { at: number; path: string; value: boolean | null };
+
+  /** claude-code sign-in: true with the gateway env, else a cached `claude auth status` probe. */
+  private async claudeSignedIn(path: string | undefined): Promise<boolean | null> {
+    if (
+      process.env.ANTHROPIC_BASE_URL &&
+      (process.env.ANTHROPIC_AUTH_TOKEN || process.env.ANTHROPIC_API_KEY)
+    )
+      return true;
+    if (!path) return null;
+    const c = this.claudeAuthCache;
+    if (c && c.path === path && Date.now() - c.at < 60_000) return c.value;
+    const value = await this.claudeAuthProbe(path).catch(() => null);
+    this.claudeAuthCache = { at: Date.now(), path, value };
+    return value;
   }
 
   private owlishClientCache?: { id: string; client: OwlishClient };
@@ -1420,7 +1443,74 @@ export class TaskService {
    * `auto` the projects root itself must be under an allowed root. Otherwise 403
    * `project_root_not_allowed`.
    */
-  async createProject(
+  // The runner overview is cached for a moment; these writes drop it (see overviewCached).
+  async createProject(...a: Parameters<TaskService["createProjectInner"]>) {
+    try {
+      return await this.createProjectInner(...a);
+    } finally {
+      this.overviewEpoch++;
+    }
+  }
+  async updateProject(...a: Parameters<TaskService["updateProjectInner"]>) {
+    try {
+      return await this.updateProjectInner(...a);
+    } finally {
+      this.overviewEpoch++;
+    }
+  }
+  async removeProject(...a: Parameters<TaskService["removeProjectInner"]>) {
+    try {
+      return await this.removeProjectInner(...a);
+    } finally {
+      this.overviewEpoch++;
+    }
+  }
+  async updateSettings(...a: Parameters<TaskService["updateSettingsInner"]>) {
+    try {
+      return await this.updateSettingsInner(...a);
+    } finally {
+      this.overviewEpoch++;
+    }
+  }
+
+  private overviewEpoch = 0;
+  private readonly overviewMemo = new Map<
+    string,
+    { at: number; epoch: number; structure: number; value: Promise<unknown> }
+  >();
+
+  /**
+   * One runner.overview answer per key, shared by concurrent callers and reused for
+   * {@link OVERVIEW_TTL_MS}. It is dropped at once when this process changes settings, a project
+   * or a task's status folder; budget spend, plans and edits by other processes show up when the
+   * TTL ends. A failed compute is not kept.
+   */
+  overviewCached<T>(key: string, compute: () => Promise<T>): Promise<T> {
+    const now = Date.now();
+    const structure = taskStructureEpoch();
+    const hit = this.overviewMemo.get(key);
+    if (
+      hit &&
+      hit.epoch === this.overviewEpoch &&
+      hit.structure === structure &&
+      now - hit.at < OVERVIEW_TTL_MS
+    ) {
+      return hit.value as Promise<T>;
+    }
+    const value = compute();
+    const entry = { at: now, epoch: this.overviewEpoch, structure, value };
+    this.overviewMemo.set(key, entry);
+    value.catch(() => {
+      if (this.overviewMemo.get(key) === entry) this.overviewMemo.delete(key);
+    });
+    if (this.overviewMemo.size > 64) {
+      for (const [k, e] of this.overviewMemo)
+        if (now - e.at >= OVERVIEW_TTL_MS) this.overviewMemo.delete(k);
+    }
+    return value;
+  }
+
+  private async createProjectInner(
     input: CreateProjectBodyInput & { origin?: ProjectOrigin },
     actor?: Principal,
   ): Promise<Project> {
@@ -1525,7 +1615,7 @@ export class TaskService {
     }
   }
 
-  async updateProject(
+  private async updateProjectInner(
     id: string,
     patch: ProjectPatch,
     actor?: Principal,
@@ -1597,7 +1687,7 @@ export class TaskService {
   }
 
   /** Archive (default) or purge a project; refused while one of its tasks runs. */
-  async removeProject(
+  private async removeProjectInner(
     id: string,
     opts: { purge?: boolean } = {},
     actor?: Principal,
@@ -1893,7 +1983,7 @@ export class TaskService {
   }
 
   /** Apply a settings patch; a change of `runner.enabled` appends a global `runner.enabled` event. */
-  async updateSettings(
+  private async updateSettingsInner(
     patch: SettingsPatch,
     actor?: Principal,
     expectedVersion?: string,
@@ -2008,11 +2098,16 @@ export class TaskService {
 
   /** Every tool with its install result and readiness: no gateway request, no prompt. */
   private async readyTools(refresh: boolean, projectId?: string, includeHidden = false) {
-    const installs = await this.catalog.installedAll(refresh ? 10_000 : 5 * 60_000);
+    const installs = await this.catalog.installedAll(refresh ? 0 : 5 * 60_000);
     const tools: HarnessStatusResult["tools"] = {};
     let oldest = Date.now();
     const settings = await this.loadSettings();
     const anyProjectKey = await this.anyProjectKey();
+    const claudeFound = installs["claude-code"];
+    const claudeSignedIn =
+      claudeFound?.installed && !claudeFound.hidden
+        ? await this.claudeSignedIn(claudeFound.path)
+        : null;
     for (const info of this.catalog.list()) {
       const found = installs[info.id];
       if (!found || (found.hidden && !includeHidden)) continue;
@@ -2025,6 +2120,7 @@ export class TaskService {
           gatewayConfigured: !!settings.owlish,
           anyProjectKey,
           message: install.message,
+          claudeSignedIn,
         }),
       };
       // With a project: why a task of this project could not start with this tool.
@@ -2172,7 +2268,12 @@ function toolReadiness(
   displayName: string,
   installed: boolean,
   unavailableReason: string | undefined,
-  ctx: { gatewayConfigured: boolean; anyProjectKey: boolean; message: string },
+  ctx: {
+    gatewayConfigured: boolean;
+    anyProjectKey: boolean;
+    message: string;
+    claudeSignedIn?: boolean | null;
+  },
 ): ToolReadiness {
   if (unavailableReason) return { ready: false, readyReason: unavailableReason, fixPage: "agents" };
   if (!installed)
@@ -2195,10 +2296,37 @@ function toolReadiness(
       readyReason: ctx.gatewayConfigured ? "Uses the better-ccflare gateway." : "Uses an API key.",
     };
   }
+  if (id === "claude-code" && ctx.claudeSignedIn === false)
+    return {
+      ready: false,
+      readyReason: "Claude Code is installed but not signed in.",
+      fixHint: "Run `claude` once in a terminal and sign in, then check again.",
+      fixPage: "agents",
+    };
   return {
     ready: true,
     readyReason: `Installed. If it asks you to sign in, run ${id === "claude-code" ? "claude" : id} once in a terminal.`,
   };
+}
+
+/**
+ * `claude auth status`: true when signed in, false when it says it is not, null when it cannot be
+ * told (old CLI, timeout). Only the exit code and the `loggedIn` field are read; nothing is printed.
+ */
+export async function probeClaudeAuth(path: string): Promise<boolean | null> {
+  const res = await execCommand(path, ["auth", "status"], {
+    launch: { kind: "direct" },
+    cwd: process.cwd(),
+    timeoutMs: 5000,
+  });
+  if (res.timedOut) return null;
+  try {
+    const parsed = JSON.parse(res.stdout) as { loggedIn?: unknown };
+    if (typeof parsed.loggedIn === "boolean") return parsed.loggedIn;
+  } catch {
+    /* not JSON */
+  }
+  return null;
 }
 
 function projectNotFound(id: string): OpError {
@@ -2207,6 +2335,8 @@ function projectNotFound(id: string): OpError {
 
 /** A health check younger than this is not repeated: each check is a paid model call per tool. */
 const HEALTH_COOLDOWN_MS = 60_000;
+/** How long one runner.overview answer is reused (see TaskService.overviewCached). */
+const OVERVIEW_TTL_MS = 1_500;
 
 const ORIGIN_KIND = { harness: "api", mcp: "mcp", ui: "ui", cli: "cli" } as const;
 

@@ -63,7 +63,10 @@ export function HomePage({
     setBusy(null);
   };
 
-  const loading = projects === null || (overview === null && !runner?.denied);
+  // Projects come from a fast request; the overview reads every project's folders and can be slow.
+  // Cards render as soon as the projects are known, with progress filled in when it arrives.
+  const loading = projects === null;
+  const progressPending = overview === null && !runner?.denied;
   return (
     <div className="flex flex-col gap-6" data-testid="home">
       <h1 className="m-0">Home</h1>
@@ -78,7 +81,7 @@ export function HomePage({
             aria-live="polite"
             className="m-0 min-w-0 flex-1 text-[length:var(--text-row)] text-ink-muted"
           >
-            {loading
+            {loading || progressPending
               ? "Loading…"
               : `${summary.running} running · ${summary.queued} queued · ${summary.needsYou} need you · ${summary.doneToday} done today`}
           </p>
@@ -113,6 +116,7 @@ export function HomePage({
                     card={card}
                     runningTitle={first ? titleOf(`${card.project.id}/${first}`) : null}
                     paused={row?.paused ?? card.project.paused}
+                    progressPending={progressPending}
                     busy={busy === card.project.id}
                     onTogglePause={() => void togglePause(card, row?.paused ?? card.project.paused)}
                   />

@@ -45,6 +45,21 @@ describe("stateOf", () => {
     expect(stateOf(row({})).state).toBe("idle");
     expect(stateOf(undefined).state).toBe("idle");
   });
+  it("one old failed task does not mark a project Blocked forever", () => {
+    const now = Date.parse("2026-11-16T12:00:00Z");
+    const failed = { counts: { failed: 1 } };
+    expect(stateOf(row({ ...failed, lastFailure: "2026-11-16T10:00:00Z" }), now).state).toBe(
+      "blocked",
+    );
+    expect(stateOf(row({ ...failed, lastFailure: "2026-11-10T10:00:00Z" }), now).state).toBe(
+      "idle",
+    );
+    // Work is queued past the failure: not blocked.
+    expect(
+      stateOf(row({ counts: { failed: 1, pending: 2 }, lastFailure: "2026-11-16T10:00:00Z" }), now)
+        .state,
+    ).toBe("idle");
+  });
 });
 
 describe("homeCards", () => {
@@ -87,7 +102,9 @@ describe("homeCards", () => {
   it("carries plan, goals and activity text", () => {
     const d = cards.find((c) => c.project.id === "d")!;
     expect(d.planTitle).toBe("Ship");
-    expect(d.goalsText).toBe("goals 7/11");
+    expect(d.goalsText).toBe("7 of 11 goals done");
+    // Both counts read "N of M <unit> done", so the two denominators are labelled alike.
+    expect(cards.find((c) => c.total > 0)!.progressText).toMatch(/^\d+ of \d+ tasks done$/);
     expect(d.activityText).toBe("active 5m ago");
   });
   it("sorts cards without lastActivity by name, after the ones with activity", () => {

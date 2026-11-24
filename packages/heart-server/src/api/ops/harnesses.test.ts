@@ -80,7 +80,7 @@ describe("harnesses.status operation", () => {
     expect(Number.isNaN(Date.parse(out.checkedAt))).toBe(false);
   });
 
-  it("says anyInstalled false when nothing is installed, caches, and refresh is rate-limited", async () => {
+  it("says anyInstalled false when nothing is installed, caches, and refresh always checks again", async () => {
     await setup(fake(false));
     const run = (refresh?: boolean) =>
       getOp("harnesses.status")!.execute(ctx, refresh === undefined ? {} : { refresh }) as Promise<{
@@ -89,8 +89,9 @@ describe("harnesses.status operation", () => {
     expect((await run()).anyInstalled).toBe(false);
     await run();
     expect(checks).toBe(1);
+    // A Re-check seconds after the last check still looks again (an agent may have been installed).
     await run(true);
-    expect(checks).toBe(1);
+    expect(checks).toBe(2);
   });
 
   it("hides the mock tool: it is not an installed agent unless a dev flag is set", async () => {
@@ -242,5 +243,52 @@ describe("starting work with no agent ready", () => {
   it("allows starting when an agent is ready", async () => {
     await setup(fake(true));
     await expect(getOp("runner.setEnabled")!.execute(ctx, { enabled: true })).resolves.toBeTruthy();
+  });
+});
+
+describe("claude-code sign-in", () => {
+  const claudeCode = (): Tool =>
+    ({ ...fake(true), id: "claude-code", displayName: "Claude Code" }) as Tool;
+  const withProbe = async (probe: () => Promise<boolean | null>) => {
+    await setup(claudeCode());
+    ctx.services = new TaskService(root, new ToolRegistry([claudeCode()]), {
+      claudeAuthProbe: probe,
+    });
+  };
+  const saved = { url: process.env.ANTHROPIC_BASE_URL, tok: process.env.ANTHROPIC_AUTH_TOKEN };
+  afterEach(() => {
+    for (const [k, v] of [
+      ["ANTHROPIC_BASE_URL", saved.url],
+      ["ANTHROPIC_AUTH_TOKEN", saved.tok],
+    ] as const) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  });
+
+  it("is not ready when installed but signed out, with a hint", async () => {
+    delete process.env.ANTHROPIC_BASE_URL;
+    await withProbe(async () => false);
+    const out = await status();
+    expect(out.tools["claude-code"]).toMatchObject({ installed: true, ready: false });
+    expect(out.tools["claude-code"].fixHint).toMatch(/claude/);
+    expect(out.anyReady).toBe(false);
+  });
+
+  it("is ready when signed in, or when the probe cannot tell", async () => {
+    delete process.env.ANTHROPIC_BASE_URL;
+    await withProbe(async () => true);
+    expect((await status()).tools["claude-code"].ready).toBe(true);
+    await withProbe(async () => null);
+    expect((await status()).tools["claude-code"].ready).toBe(true);
+  });
+
+  it("counts the gateway env as signed in without probing", async () => {
+    process.env.ANTHROPIC_BASE_URL = "http://localhost:1";
+    process.env.ANTHROPIC_AUTH_TOKEN = "t";
+    await withProbe(async () => {
+      throw new Error("must not probe");
+    });
+    expect((await status()).tools["claude-code"].ready).toBe(true);
   });
 });

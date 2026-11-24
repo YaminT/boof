@@ -21,6 +21,8 @@ export function isUiPath(rawPath: string): boolean {
     rawPath === "/index.html" ||
     rawPath === "/inbox" ||
     rawPath === "/inbox/" ||
+    rawPath === "/doctor" ||
+    rawPath === "/doctor/" ||
     PROJECT_PATH.test(rawPath)
   );
 }

@@ -72,7 +72,7 @@ describe("ProjectCard", () => {
   it("shows state, progress, plan, running task and activity", () => {
     expect(html).toContain("Needs you: 1");
     expect(html).toContain("7 of 11 tasks done");
-    expect(html).toContain("goals 7/11");
+    expect(html).toContain("7 of 11 goals done");
     expect(html).toContain("Plan: Launch");
     expect(html).toContain("Running now: Fix login");
     expect(html).toContain("active 5m ago");
@@ -97,5 +97,52 @@ describe("ProjectCard", () => {
   it("has a skeleton of the same height", () => {
     expect(renderToStaticMarkup(h(ProjectCardSkeleton))).toContain("min-h-[176px]");
     expect(html).toContain("min-h-[176px]");
+  });
+});
+
+describe("ProjectCard before the overview arrives", () => {
+  it("shows the project with a progress placeholder, not a bare skeleton", () => {
+    const html = render(card({}), { progressPending: true });
+    expect(html).toContain("Demo");
+    expect(html).toContain('data-testid="card-progress-pending"');
+    expect(html).toContain("Loading…");
+    expect(html).not.toContain("No tasks yet");
+    expect(html).not.toContain('role="progressbar"');
+    expect(html).toContain('aria-label="Pause Demo"');
+  });
+});
+
+describe("ProjectCard finished-work note", () => {
+  const withPlans = (plans: { goalsDone: number; goalsTotal: number; finishedBranch?: string }) =>
+    homeCards(
+      [project],
+      {
+        enabled: true,
+        budgetExceeded: [],
+        projects: [
+          {
+            id: "demo",
+            paused: false,
+            running: [],
+            counts: { done: 3 },
+            plans: { activeTitle: "Launch", ...plans },
+          },
+        ],
+      },
+      Date.now(),
+    )[0]!;
+
+  it("names the branch and the merge command on the card of a finished plan", () => {
+    const html = render(
+      withPlans({ goalsDone: 2, goalsTotal: 2, finishedBranch: "boof-runner/t9" }),
+    );
+    expect(html).toContain('data-testid="finished-work-note"');
+    expect(html).toContain("<code>boof-runner/t9</code>");
+    expect(html).toContain("<code>git merge boof-runner/t9</code>");
+  });
+
+  it("shows no note while goals remain or when the server sent no branch", () => {
+    expect(render(withPlans({ goalsDone: 1, goalsTotal: 2 }))).not.toContain("finished-work-note");
+    expect(render(withPlans({ goalsDone: 2, goalsTotal: 2 }))).not.toContain("finished-work-note");
   });
 });

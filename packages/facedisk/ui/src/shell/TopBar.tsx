@@ -46,6 +46,8 @@ import {
   withFinished,
   type FinishedMemory,
 } from "../lib/finished.js";
+import { ConnectionIndicator } from "./ConnectionIndicator.js";
+import { announcementOf } from "../lib/topbar-announce.js";
 import { StopTaskDialog } from "./StopTaskDialog.js";
 import { toast } from "sonner";
 
@@ -274,11 +276,8 @@ export function TopBar({
 
   // The last completion: kept for 10 minutes, until dismissed, or until new work starts.
   const [finished, setFinished] = useState<FinishedMemory>(EMPTY_FINISHED);
-  // Tasks of the selected project that ended failed or stopped (the other projects' statuses are not loaded).
-  const notDone = data.tasks
-    .filter((t) => ["failed", "stopped"].includes(t.frontmatter.status))
-    .map((t) => `${pid}/${t.frontmatter.id}`);
-  const notDoneKey = notDone.join("\n");
+  // Done tasks across every project, from the server's counts (the task list holds one project).
+  const doneTotal = overview ? overview.projects.reduce((n, p) => n + (p.counts.done ?? 0), 0) : 0;
   const runningKey = state.running.map((r) => `${r.pid}/${r.taskId}`).join("\n");
   useEffect(() => {
     // The first overview is not a finish, and a missing overview says nothing about the queue.
@@ -289,11 +288,11 @@ export function TopBar({
         running: runningKey ? runningKey.split("\n") : [],
         queued,
         now: Date.now(),
-        notDone,
+        doneTotal,
       }),
     );
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- notDone is read through its key
-  }, [overview, denied, state.kind, runningKey, queued, notDoneKey]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- running is read through its key
+  }, [overview, denied, state.kind, runningKey, queued, doneTotal]);
   const finishedAt = finished.finished?.at;
   useEffect(() => {
     if (finishedAt === undefined) return;
@@ -339,11 +338,10 @@ export function TopBar({
       className="topbar sticky top-0 z-20 -mx-4 px-4 min-[720px]:-mx-8 min-[720px]:px-8"
     >
       <div className="mx-auto flex h-12 w-full max-w-[1320px] items-center gap-2 text-[length:var(--text-row)]">
-        <span
-          aria-live="polite"
-          title={shownState.text}
-          className="flex min-w-0 flex-1 items-center gap-2"
-        >
+        <span aria-live="polite" className="sr-only" data-testid="topbar-announce">
+          {announcementOf(shownState, stateWord)}
+        </span>
+        <span title={shownState.text} className="flex min-w-0 flex-1 items-center gap-2">
           {tone === "idle" ? (
             <span aria-hidden className="topbar-dot size-2.5 shrink-0 rounded-full" />
           ) : (
@@ -407,6 +405,7 @@ export function TopBar({
               ))}
             </select>
           ))}
+        <ConnectionIndicator />
         {harnesses.status !== null && !harnesses.status.anyReady && (
           <a
             href={formatRoute({ name: "doctor" })}

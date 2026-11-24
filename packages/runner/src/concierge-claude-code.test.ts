@@ -387,7 +387,28 @@ describe.skipIf(process.platform === "win32")("ClaudeCodeConcierge", () => {
     setEnv("CLAUDE_FAKE_MODE", "hang");
     const b = bridge();
     const controller = new AbortController();
-    setTimeout(() => controller.abort(), 700);
+    // Abort once the CLI is running (it logs its start), not after a guessed delay.
+    const started = setInterval(() => {
+      if (!existsSync(logFile)) return;
+      clearInterval(started);
+      controller.abort();
+    }, 10);
+    const error = await agent()
+      .turn(turnInput({ bridge: b, signal: controller.signal }))
+      .catch((e: unknown) => e)
+      .finally(() => clearInterval(started));
+    expect(error).toMatchObject({ kind: "aborted" });
+    expect(await turnDirs()).toEqual([]);
+    expect(b.closed).toBe(1);
+  });
+
+  it("stops a turn that was aborted while it was still being set up", async () => {
+    setEnv("CLAUDE_FAKE_MODE", "hang");
+    const controller = new AbortController();
+    const b = bridge();
+    const open = b.open;
+    // The abort lands after the signal was first checked and before the CLI starts.
+    b.open = () => (controller.abort(), open());
     const error = await agent()
       .turn(turnInput({ bridge: b, signal: controller.signal }))
       .catch((e: unknown) => e);

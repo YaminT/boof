@@ -1976,9 +1976,13 @@ JSON body (unknown keys are rejected):
 - Scope: `settings:read`
 - MCP tool: `boof_runner_status`
 - CLI: `boof-runner runner overview`
-- What it does: Returns whether the runner is enabled and, per project the client may access, whether it is paused, which tasks run now and how many tasks have each status. No input. No side effects.
-- Success: HTTP 200 with `{ agentAuth: { allowed: boolean, projectId: string, reason: string | null, roles: ("planner" | "developer" | "observer" | "reviewer")[], via: "gateway" | "project-key" | null }[], budgetExceeded: { exceeded: boolean, limitUsd: number | null, remainingUsd: number | null, scope: string, spentUsd: number }[], concurrency: integer, enabled: boolean, pool: { configured: integer | null, nextAvailableAt: string | null, paused: integer | null, rateLimited: integer | null, reason: string | null, routable: integer | null, status: "absent" | "unreachable" | "ok" | "degraded" | "unhealthy", usageExhausted: integer | null }, projects: { counts: { [key: string]: integer }, doneToday: integer, id: string, lastActivity: string | null, paused: boolean, plans: object, running: string[] }[] }`.
-- Errors: `403 forbidden_scope`
+- What it does: Returns whether the runner is enabled and, per project the client may access, whether it is paused, which tasks run now and how many tasks have each status. Optional input: tzOffsetMinutes (your Date.getTimezoneOffset(), so doneToday counts from your midnight; the server's local midnight without it). No side effects.
+- Success: HTTP 200 with `{ agentAuth: { allowed: boolean, projectId: string, reason: string | null, roles: ("planner" | "developer" | "observer" | "reviewer")[], via: "gateway" | "project-key" | null }[], budgetExceeded: { exceeded: boolean, limitUsd: number | null, remainingUsd: number | null, scope: string, spentUsd: number }[], concurrency: integer, enabled: boolean, pool: { configured: integer | null, nextAvailableAt: string | null, paused: integer | null, rateLimited: integer | null, reason: string | null, routable: integer | null, status: "absent" | "unreachable" | "ok" | "degraded" | "unhealthy", usageExhausted: integer | null }, projects: { counts: { [key: string]: integer }, doneToday: integer, id: string, lastActivity: string | null, lastFailure: string | null, paused: boolean, plans: object, running: string[] }[] }`.
+- Errors: `403 forbidden_scope`, `400 invalid_input`
+
+Query parameters:
+
+- `tzOffsetMinutes`: `integer -1440..1440`, optional
 
 #### `PUT /api/v1/runner` (Start or pause the runner)
 

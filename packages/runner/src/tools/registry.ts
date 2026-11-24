@@ -53,10 +53,12 @@ export class ToolRegistry implements ToolCatalog {
 
   /**
    * Check which tools are installed (free: no prompt) unless the last check is younger than
-   * `maxAgeMs`; concurrent callers share one check. Returns id → result.
+   * `maxAgeMs`; concurrent callers share one check. Returns id → result. `maxAgeMs` 0 forces a
+   * new check: a check that was already running may have looked before the caller's change (an
+   * agent installed or signed in a moment ago), so it is not shared.
    */
   installedAll(maxAgeMs = 5 * 60_000): Promise<Record<string, CachedInstall>> {
-    if (this.installInFlight) return this.installInFlight;
+    if (this.installInFlight && maxAgeMs > 0) return this.installInFlight;
     const ids = this.list().map((t) => t.id);
     if (
       maxAgeMs > 0 &&
@@ -68,8 +70,8 @@ export class ToolRegistry implements ToolCatalog {
     ) {
       return Promise.resolve(Object.fromEntries(ids.map((id) => [id, this.installCache.get(id)!])));
     }
-    const run = this.runInstalled().finally(() => {
-      this.installInFlight = undefined;
+    const run: Promise<Record<string, CachedInstall>> = this.runInstalled().finally(() => {
+      if (this.installInFlight === run) this.installInFlight = undefined;
     });
     this.installInFlight = run;
     return run;

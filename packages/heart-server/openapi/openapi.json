@@ -4702,7 +4702,7 @@
     },
     "/harnesses": {
       "get": {
-        "description": "Reports which coding-agent tools (harnesses) are installed on the computer that runs boof: for each tool whether it was found, its version and path, and whether it was found off PATH (foundOffPath). Also anyInstalled. Free: it looks for the program and asks it for `--version`; it never sends a prompt. The result is cached for five minutes; `refresh` re-checks (at most once every ten seconds). With `forProject` (a project id), a tool that is installed but cannot start for that project carries startBlock, the reason. Needs settings:read.",
+        "description": "Reports which coding-agent tools (harnesses) are installed on the computer that runs boof: for each tool whether it was found, its version and path, and whether it was found off PATH (foundOffPath). Also anyInstalled. Free: it looks for the program and asks it for `--version`; it never sends a prompt. The result is cached for five minutes; `refresh` always re-checks. With `forProject` (a project id), a tool that is installed but cannot start for that project carries startBlock, the reason. Needs settings:read.",
         "operationId": "harnesses.status",
         "parameters": [
           {
@@ -15176,9 +15176,20 @@
     },
     "/runner/status": {
       "get": {
-        "description": "Returns whether the runner is enabled and, per project the client may access, whether it is paused, which tasks run now and how many tasks have each status. No input. No side effects.",
+        "description": "Returns whether the runner is enabled and, per project the client may access, whether it is paused, which tasks run now and how many tasks have each status. Optional input: tzOffsetMinutes (your Date.getTimezoneOffset(), so doneToday counts from your midnight; the server's local midnight without it). No side effects.",
         "operationId": "runner.overview",
-        "parameters": [],
+        "parameters": [
+          {
+            "in": "query",
+            "name": "tzOffsetMinutes",
+            "required": false,
+            "schema": {
+              "maximum": 1440,
+              "minimum": -1440,
+              "type": "integer"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -15413,6 +15424,12 @@
                               "null"
                             ]
                           },
+                          "lastFailure": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
                           "paused": {
                             "type": "boolean"
                           },
@@ -15420,6 +15437,12 @@
                             "additionalProperties": false,
                             "properties": {
                               "activeTitle": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "finishedBranch": {
                                 "type": [
                                   "string",
                                   "null"
@@ -15439,7 +15462,8 @@
                             "required": [
                               "activeTitle",
                               "goalsDone",
-                              "goalsTotal"
+                              "goalsTotal",
+                              "finishedBranch"
                             ],
                             "type": "object"
                           },
@@ -15457,6 +15481,7 @@
                           "counts",
                           "plans",
                           "lastActivity",
+                          "lastFailure",
                           "doneToday"
                         ],
                         "type": "object"

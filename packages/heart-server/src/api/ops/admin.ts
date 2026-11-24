@@ -13,7 +13,7 @@ import { AGENT_KEY_MUST_BE_SEPARATE, OwlishClient } from "@boof/owlish";
 import { defineOp, type OpContext } from "../define-op.js";
 import { OpError } from "../errors.js";
 import { buildModelDetails } from "../services/model-details.js";
-import type { Client } from "@boof/heart";
+import type { Client, Plan } from "@boof/heart";
 import { CommandBody, CreateClientBody } from "../validation.js";
 import {
   CommandRenameSchema,
@@ -354,14 +354,28 @@ export const runnerStatus = defineOp({
   },
 });
 
+/** Start of the caller's day (ms): by its UTC offset when given, else the server's local midnight. */
+export function dayStart(nowMs: number, tzOffsetMinutes?: number): number {
+  if (tzOffsetMinutes === undefined) {
+    const d = new Date(nowMs);
+    d.setHours(0, 0, 0, 0);
+    return d.getTime();
+  }
+  const shifted = nowMs - tzOffsetMinutes * 60_000;
+  return shifted - (((shifted % 86_400_000) + 86_400_000) % 86_400_000) + tzOffsetMinutes * 60_000;
+}
+
 export const runnerOverview = defineOp({
   name: "runner.overview",
   title: "Runner and queue status",
   description:
-    "Returns whether the runner is enabled and, per project the client may access, whether it is paused, which tasks run now and how many tasks have each status. No input. No side effects.",
+    "Returns whether the runner is enabled and, per project the client may access, whether it is paused, which tasks run now and how many tasks have each status. Optional input: tzOffsetMinutes (your Date.getTimezoneOffset(), so doneToday counts from your midnight; the server's local midnight without it). No side effects.",
   scope: "settings:read",
   projectScoped: false,
-  input: z.strictObject({}),
+  input: z.strictObject({
+    /** The caller's `Date.getTimezoneOffset()` (UTC minus local, minutes): where "today" starts. */
+    tzOffsetMinutes: z.number().int().min(-1440).max(1440).optional(),
+  }),
   output: z.object({
     enabled: z.boolean(),
     concurrency: z.number().int(),
@@ -381,9 +395,13 @@ export const runnerOverview = defineOp({
           activeTitle: z.string().nullable(),
           goalsDone: z.number().int(),
           goalsTotal: z.number().int(),
+          /** When every goal of that plan is done: the branch that holds the finished work. */
+          finishedBranch: z.string().nullable(),
         }),
-        /** When the task folders last changed (ISO), and tasks finished since local midnight. */
+        /** When the task folders last changed (ISO), and tasks finished since the caller's midnight. */
         lastActivity: z.string().nullable(),
+        /** When a task last moved into `failed` (ISO). */
+        lastFailure: z.string().nullable(),
         doneToday: z.number().int(),
       }),
     ),
@@ -399,60 +417,86 @@ export const runnerOverview = defineOp({
     (r.projects
       .map((p) => `${p.id}${p.paused ? " (paused)" : ""}: ${p.running.length} running`)
       .join(", ") || "no projects"),
-  handler: async (ctx) => {
-    const { runner } = await ctx.services.loadSettings();
-    const allowed = (pid: string) => authorizeProject(ctx.principal, pid);
-    // The project rows, budget, pool and agent auth each read their own files. Waiting for one
-    // before the next made this request sit behind the soak's other filesystem work.
-    const [projects, budget, pool, agentAuth] = await Promise.all([
-      (async () => {
-        const listed = (await ctx.services.listProjects()).filter((p) => allowed(p.id));
-        return Promise.all(
-          listed.map(async (p) => {
-            const svc = ctx.services.forProject(p.id);
-            const midnight = new Date();
-            midnight.setHours(0, 0, 0, 0);
-            const [{ counts, running }, plans, activity] = await Promise.all([
-              svc.statusSummary(),
-              svc.plans.list().catch(() => []),
-              svc.activity(midnight.getTime()).catch(() => null),
-            ]);
-            const active = plans
-              .filter((pl) => pl.status === "active")
-              .sort((a, b) => b.updated.localeCompare(a.updated))[0];
-            return {
-              id: p.id,
-              paused: p.paused,
-              running,
-              counts,
-              plans: {
-                activeTitle: active?.title ?? null,
-                goalsDone: active?.doneCount ?? 0,
-                goalsTotal: active?.goalCount ?? 0,
-              },
-              lastActivity:
-                activity?.lastActivityMs != null
-                  ? new Date(activity.lastActivityMs).toISOString()
-                  : null,
-              doneToday: activity?.doneSince ?? 0,
-            };
-          }),
-        );
-      })(),
-      ctx.services.budgetStatus(allowed),
-      ctx.services.poolStatus(),
-      ctx.services.agentAuthStatus(allowed),
-    ]);
-    return {
-      enabled: runner.enabled,
-      concurrency: runner.concurrency,
-      budgetExceeded: budget.exceeded,
-      pool,
-      agentAuth,
-      projects,
-    };
+  handler: (ctx, input) => {
+    // Callers with the same project access and the same "today" share one answer for a moment.
+    const access =
+      ctx.principal.projects === "*" ? "*" : [...ctx.principal.projects].sort().join(",");
+    const day = dayStart(Date.now(), input.tzOffsetMinutes);
+    return ctx.services.overviewCached(`${access}|${day}`, () => computeOverview(ctx, input));
   },
 });
+
+/** The branch of the last goal's last task (goals by `order`, then id): the tasks are stacked. */
+export function finishedBranchOf(plan: Pick<Plan, "goals">): string | null {
+  const goals = [...plan.goals].sort((a, b) => a.order - b.order || a.id.localeCompare(b.id));
+  if (goals.length === 0 || goals.some((g) => g.status !== "done")) return null;
+  const branches = goals.map((g) => g.tasks.at(-1)?.branch).filter((b): b is string => !!b);
+  return branches.at(-1) ?? null;
+}
+
+async function computeOverview(ctx: OpContext, input: { tzOffsetMinutes?: number }) {
+  const { runner } = await ctx.services.loadSettings();
+  const allowed = (pid: string) => authorizeProject(ctx.principal, pid);
+  // The project rows, budget, pool and agent auth each read their own files. Waiting for one
+  // before the next made this request sit behind the soak's other filesystem work.
+  const [projects, budget, pool, agentAuth] = await Promise.all([
+    (async () => {
+      const listed = (await ctx.services.listProjects()).filter((p) => allowed(p.id));
+      return Promise.all(
+        listed.map(async (p) => {
+          const svc = ctx.services.forProject(p.id);
+          const midnightMs = dayStart(Date.now(), input.tzOffsetMinutes);
+          const [{ counts, running }, plans, activity] = await Promise.all([
+            svc.statusSummary(),
+            svc.plans.list().catch(() => []),
+            svc.activity(midnightMs).catch(() => null),
+          ]);
+          const active = plans
+            .filter((pl) => pl.status === "active")
+            .sort((a, b) => b.updated.localeCompare(a.updated))[0];
+          // Only a plan with every goal done needs its goals read, for the branch of the work.
+          const finishedBranch =
+            active && active.goalCount > 0 && active.doneCount === active.goalCount
+              ? await svc.plans
+                  .get(active.id)
+                  .then(finishedBranchOf)
+                  .catch(() => null)
+              : null;
+          return {
+            id: p.id,
+            paused: p.paused,
+            running,
+            counts,
+            plans: {
+              activeTitle: active?.title ?? null,
+              goalsDone: active?.doneCount ?? 0,
+              goalsTotal: active?.goalCount ?? 0,
+              finishedBranch,
+            },
+            lastActivity:
+              activity?.lastActivityMs != null
+                ? new Date(activity.lastActivityMs).toISOString()
+                : null,
+            lastFailure:
+              activity?.lastFailedMs != null ? new Date(activity.lastFailedMs).toISOString() : null,
+            doneToday: activity?.doneSince ?? 0,
+          };
+        }),
+      );
+    })(),
+    ctx.services.budgetStatus(allowed),
+    ctx.services.poolStatus(),
+    ctx.services.agentAuthStatus(allowed),
+  ]);
+  return {
+    enabled: runner.enabled,
+    concurrency: runner.concurrency,
+    budgetExceeded: budget.exceeded,
+    pool,
+    agentAuth,
+    projects,
+  };
+}
 
 export const runnerSetEnabled = defineOp({
   name: "runner.setEnabled",

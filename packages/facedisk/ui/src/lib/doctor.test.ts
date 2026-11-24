@@ -13,6 +13,7 @@ import {
   gateOf,
   reachableWhileBlocked,
   recallEntry,
+  shouldRecheckOnOpen,
   rememberEntry,
   summarize,
 } from "./doctor.js";
@@ -252,5 +253,15 @@ describe("agent count", () => {
     } as unknown as HarnessStatus;
     expect(doctorView(s, null).summary).toContain("2 agents ready");
     expect(compactSummary(s)).toContain("2 agents ready");
+  });
+});
+
+describe("shouldRecheckOnOpen", () => {
+  const at = (ms: number) => ({ checkedAt: new Date(ms).toISOString() });
+  it("asks again for an answer older than the limit, never for a fresh one or none yet", () => {
+    expect(shouldRecheckOnOpen(at(1_000), 200_000, 30_000)).toBe(true);
+    expect(shouldRecheckOnOpen(at(190_000), 200_000, 30_000)).toBe(false);
+    expect(shouldRecheckOnOpen(null, 200_000, 30_000)).toBe(false);
+    expect(shouldRecheckOnOpen({ checkedAt: "garbage" }, 200_000, 30_000)).toBe(true);
   });
 });
