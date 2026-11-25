@@ -70,6 +70,26 @@ describe("TaskStore status index", () => {
     expect((await store.activity(after)).doneSince).toBe(0);
   });
 
+  it("counts done tasks the same whatever their front matter looks like", async () => {
+    const dir = statusDir(root, "done");
+    await mkdir(dir, { recursive: true });
+    const recent = new Date().toISOString();
+    const canonical = serializeTask(newTask(fm({ id: "a", status: "done", updated: recent }), "x"));
+    const files: Record<string, string> = {
+      "canonical.md": canonical,
+      "crlf.md": canonical.replace(/\n/g, "\r\n"),
+      "quoted.md": canonical.replace(`updated: ${recent}`, `updated: "${recent}"`),
+      "huge.md": canonical + "## Log\n\n" + "line\n".repeat(100_000),
+      "bom.md": "\uFEFF" + canonical,
+    };
+    for (const [name, text] of Object.entries(files)) await writeFile(join(dir, name), text);
+    const day = Date.now() - 3_600_000;
+    expect((await store.activity(day)).doneSince).toBe(5);
+    // A file with no front matter is still an error, as when every file was parsed in full.
+    await writeFile(join(dir, "nofence.md"), "## Prompt\n");
+    await expect(store.activity(day - 1)).rejects.toThrow();
+  });
+
   it("counts a done task by the completion time in the task, not the file mtime, and caches it", async () => {
     const dir = statusDir(root, "done");
     await mkdir(dir, { recursive: true });
