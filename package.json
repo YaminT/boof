@@ -1,6 +1,6 @@
 {
   "name": "boof-runner",
-  "version": "0.8.1",
+  "version": "0.8.2",
   "private": true,
   "description": "Agent Task Runner \u2014 queue prompts and run them through a planner \u2192 developer \u2192 reviewer pipeline",
   "type": "module",
@@ -58,7 +58,7 @@
     "tar": "^7.5.22",
     "http-cache-semantics": "^4.3.0",
     "fast-uri": "^3.1.9",
-    "@xmldom/xmldom": "^0.8.15",
+    "@xmldom/xmldom": "^0.8.25",
     "minimatch@>=7.0.0 <11.0.1": "^11.0.1"
   }
 }
