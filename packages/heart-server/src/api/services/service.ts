@@ -984,12 +984,23 @@ export class TaskService {
       (process.env.ANTHROPIC_AUTH_TOKEN || process.env.ANTHROPIC_API_KEY)
     )
       return true;
+    if (await this.gatewayRoutesAgents().catch(() => false)) return true;
     if (!path) return null;
     const c = this.claudeAuthCache;
     if (c && c.path === path && Date.now() - c.at < 60_000) return c.value;
     const value = await this.claudeAuthProbe(path).catch(() => null);
     this.claudeAuthCache = { at: Date.now(), path, value };
     return value;
+  }
+
+  /** True when boof itself routes agents through a gateway (internal pool, or better-ccflare with an agent key). */
+  private async gatewayRoutesAgents(): Promise<boolean> {
+    const settings = await this.loadSettings();
+    const mode = resolveGatewayMode(settings);
+    if (mode === "internal") return true;
+    if (mode === "better-ccflare" && settings.owlish)
+      return Boolean(await this.owlishSecrets.getAgent());
+    return false;
   }
 
   private owlishClientCache?: { id: string; client: OwlishClient };

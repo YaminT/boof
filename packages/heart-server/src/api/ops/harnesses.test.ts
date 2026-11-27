@@ -291,4 +291,18 @@ describe("claude-code sign-in", () => {
     });
     expect((await status()).tools["claude-code"].ready).toBe(true);
   });
+
+  it("counts a boof-routed gateway (agent key) as signed in without probing", async () => {
+    delete process.env.ANTHROPIC_BASE_URL;
+    delete process.env.ANTHROPIC_AUTH_TOKEN;
+    await withProbe(async () => {
+      throw new Error("must not probe");
+    });
+    await ctx.services.updateSettings(
+      { owlish: { url: "http://127.0.0.1:9" } } as never,
+      ctx.principal,
+    );
+    await ctx.services.owlishSecrets.setAgent("agent-key-123456");
+    expect((await status()).tools["claude-code"].ready).toBe(true);
+  });
 });
