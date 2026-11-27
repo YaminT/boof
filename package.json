@@ -58,7 +58,7 @@
     "tar": "^7.5.22",
     "http-cache-semantics": "^4.3.0",
     "fast-uri": "^3.1.9",
-    "@xmldom/xmldom": "^0.8.25",
+    "@xmldom/xmldom": "^0.8.15",
     "minimatch@>=7.0.0 <11.0.1": "^11.0.1"
   }
 }
